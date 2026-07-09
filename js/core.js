@@ -84,7 +84,7 @@ const S = {
   vp:              { tx:400, ty:300, scale:1 },
   listOrder:[],
   merges:[],
-  backboneGroupId: null,  // null = 最初のグループを自動採用
+  backboneGroupId: null,  // null = 一番長いライン（メインライン）を自動採用
   _undo:[],
   _redo:[],
 };
@@ -179,14 +179,32 @@ function getActiveChartName() {
 }
 
 /**
+ * 一番長いライン（＝メインライン）のグループIDを返す。
+ * 「長さ」は通し番号の対象となる加工・検査記号の数で判定し、
+ * 同数の場合は所属ノード総数 → グループ定義順で決定する。
+ */
+function findLongestLineGroupId(nodes, groups) {
+  if (!groups || !groups.length) return null;
+  let bestId = groups[0].id, bestNum = -1, bestLen = -1;
+  for (const g of groups) {
+    const members = (nodes || []).filter(n => n.groupId === g.id);
+    const numCnt  = members.filter(n => isNumType(n.type)).length;
+    if (numCnt > bestNum || (numCnt === bestNum && members.length > bestLen)) {
+      bestId = g.id; bestNum = numCnt; bestLen = members.length;
+    }
+  }
+  return bestId;
+}
+
+/**
  * 有効な背骨グループIDを返す。
  * S.backboneGroupId が設定済みで実在するグループなら採用、
- * そうでなければ S.groups[0] を自動採用。
+ * そうでなければ一番長いライン（メインライン）を自動採用。
  */
 function getBackboneGroupId() {
   const bid = S.backboneGroupId;
   if (bid && G(bid)) return bid;
-  return (S.groups && S.groups.length > 0) ? S.groups[0].id : null;
+  return findLongestLineGroupId(S.nodes, S.groups || []);
 }
 
 /** 背骨グループの通し番号付きノードを順序どおりに返す */
@@ -315,7 +333,7 @@ function _updateActiveChartDisplay() {
 
 /**
  * 工程図の背骨グループを設定する。
- * gid = null の場合は自動（最初のグループ）に戻す。
+ * gid = null の場合は自動（一番長いライン）に戻す。
  */
 function setChartBackbone(cid, gid) {
   const c = W.charts.find(x => x.id === cid); if (!c) return;

@@ -25,16 +25,70 @@ function _distToSeg(px, py, ax, ay, bx, by) {
   return Math.hypot(px - ax - t * dx, py - ay - t * dy);
 }
 
+/** 点(px,py)から折れ線 pts への最短距離 */
+function _distToPolyline(px, py, pts) {
+  let best = Infinity;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const d = _distToSeg(px, py, pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y);
+    if (d < best) best = d;
+  }
+  return best;
+}
+
+/** 折れ線 pts の全長の中間点を返す */
+function _polylineMidpoint(pts) {
+  let total = 0;
+  for (let i = 0; i < pts.length - 1; i++) {
+    total += Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y);
+  }
+  let rest = total / 2;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const len = Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y);
+    if (rest <= len || i === pts.length - 2) {
+      const t = len > 0 ? rest / len : 0;
+      return {
+        x: pts[i].x + (pts[i + 1].x - pts[i].x) * t,
+        y: pts[i].y + (pts[i + 1].y - pts[i].y) * t,
+      };
+    }
+    rest -= len;
+  }
+  return pts[0];
+}
+
 /**
  * ドラッグ中のノードに対してインサート候補を返す。
  * すでに同一経路で接続済みのエッジ・ノードは候補から除外する。
+ * ・記号本体に直接重ねた場合はそのノードの直後への挿入を最優先
+ * ・エッジは実際の描画経路（折れ線）との距離で「最も近い」ものを採用
  * @returns {null | {kind:'edge', edge, fn, tn} | {kind:'node', target}}
  */
 function _findInsertTarget(node) {
-  const r = SYMS[node.type].r;
+  const r  = SYMS[node.type].r;
+  // 運搬は左寄せ描画のため中心座標に補正して判定する
+  const cx = node.type === 'unpan' ? node.x + r : node.x;
+  const cy = node.y;
 
-  // 1. エッジへの近接（ノード自身が既に from/to になっているエッジは除外）
+  // 最近傍ノードを求めておく（自分以外・起点以外）
+  let bestNode = null, bestNodeD = Infinity;
+  for (const n of S.nodes) {
+    if (n.id === node.id || isBase(n.type)) continue;
+    // tgt→node の接続が既に存在する場合は対象外
+    if (_edgeExists(n.id, 'r', node.id, 'l')) continue;
+    const rn  = SYMS[n.type].r;
+    const ncx = n.type === 'unpan' ? n.x + rn : n.x;
+    const d   = Math.hypot(cx - ncx, cy - n.y);
+    if (d < bestNodeD) { bestNodeD = d; bestNode = n; }
+  }
+
+  // 1. 記号本体への直接重なり → そのノードの直後に挿入（最優先）
+  if (bestNode && bestNodeD < SYMS[bestNode.type].r + 6) {
+    return { kind: 'node', target: bestNode };
+  }
+
+  // 2. エッジへの近接（最も近いエッジを採用。自身が from/to のエッジは除外）
   const EDGE_HIT = r + 14;
+  let bestEdge = null, bestEdgeD = EDGE_HIT;
   for (const e of S.edges) {
     if (e.from === node.id || e.to === node.id) continue;
     if (e.hidden) continue;
@@ -45,39 +99,32 @@ function _findInsertTarget(node) {
     const wouldDup = _edgeExists(fn.id, 'r', node.id, 'l') &&
                      _edgeExists(node.id, 'r', tn.id, 'l');
     if (wouldDup) continue;
-    const a = portXY(fn, e.fromPort), b = portXY(tn, e.toPort);
-    const d = _distToSeg(node.x, node.y, a.x, a.y, b.x, b.y);
-    if (d < EDGE_HIT) return { kind: 'edge', edge: e, fn, tn };
+    const pts = _edgePolyPoints(fn, e.fromPort, tn, e.toPort);
+    const d   = _distToPolyline(cx, cy, pts);
+    if (d < bestEdgeD) { bestEdgeD = d; bestEdge = { kind: 'edge', edge: e, fn, tn }; }
   }
+  if (bestEdge) return bestEdge;
 
-  // 2. ノードへの重なり（自分以外・起点以外）
+  // 3. ノードへの近接（重なりに満たないが十分近い場合）
   const NODE_HIT = r + 10;
-  for (const n of S.nodes) {
-    if (n.id === node.id || isBase(n.type)) continue;
-    const rn = SYMS[n.type].r;
-    const cx = n.type === 'unpan' ? n.x + rn : n.x;
-    const d  = Math.hypot(node.x - cx, node.y - n.y);
-    if (d < r + rn + NODE_HIT) {
-      // tgt→node の接続が既に存在する場合はスキップ
-      if (_edgeExists(n.id, 'r', node.id, 'l')) continue;
-      return { kind: 'node', target: n };
-    }
+  if (bestNode && bestNodeD < r + SYMS[bestNode.type].r + NODE_HIT) {
+    return { kind: 'node', target: bestNode };
   }
 
   return null;
 }
 
-/** インサートヒントのSVGをTLレイヤーに描画 */
-function _renderInsertHint(target, draggingNode) {
-  if (!target) { document.getElementById('TL').innerHTML = ''; return; }
+/** インサートヒントのSVG文字列を生成（エッジは実際の描画経路をハイライト） */
+function _insertHintSVG(target) {
+  if (!target) return '';
 
   let svg = '';
   if (target.kind === 'edge') {
-    const a = portXY(target.fn, target.edge.fromPort);
-    const b = portXY(target.tn, target.edge.toPort);
-    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    const pts = _edgePolyPoints(target.fn, target.edge.fromPort, target.tn, target.edge.toPort);
+    const d   = 'M' + pts.map(p => `${p.x} ${p.y}`).join('L');
+    const { x: mx, y: my } = _polylineMidpoint(pts);
     // エッジをハイライト
-    svg += `<path class="insert-hint-anim" d="M${a.x} ${a.y}L${b.x} ${b.y}"
+    svg += `<path class="insert-hint-anim" d="${d}"
       fill="none" stroke="var(--acc)" stroke-width="3.5" stroke-dasharray="6,3"/>`;
     // 挿入位置マーカー（＋アイコン）
     svg += `<g class="insert-hint-anim">
@@ -108,8 +155,12 @@ function _renderInsertHint(target, draggingNode) {
         fill="white">→挿入</text>
     </g>`;
   }
+  return svg;
+}
 
-  document.getElementById('TL').innerHTML = svg;
+/** インサートヒントのSVGをTLレイヤーに描画 */
+function _renderInsertHint(target) {
+  document.getElementById('TL').innerHTML = _insertHintSVG(target);
 }
 
 /**
@@ -129,39 +180,7 @@ function _renderGhostAndHint(node, gx, gy, target) {
     ${drawSym(node.type, gx, gy, null)}
   </g>`;
 
-  // 挿入ヒント（_renderInsertHint と同一ロジック）
-  if (target) {
-    if (target.kind === 'edge') {
-      const a = portXY(target.fn, target.edge.fromPort);
-      const b = portXY(target.tn, target.edge.toPort);
-      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
-      svg += `<path class="insert-hint-anim" d="M${a.x} ${a.y}L${b.x} ${b.y}"
-        fill="none" stroke="var(--acc)" stroke-width="3.5" stroke-dasharray="6,3"/>
-        <g class="insert-hint-anim">
-          <circle cx="${mx}" cy="${my}" r="11"
-            fill="var(--acc-bg)" stroke="var(--acc)" stroke-width="2.5"/>
-          <path d="M${mx-5},${my} L${mx+5},${my} M${mx},${my-5} L${mx},${my+5}"
-            stroke="var(--acc)" stroke-width="2.5" stroke-linecap="round"/>
-        </g>
-        <text x="${mx}" y="${my + 24}" text-anchor="middle"
-          font-family="'Noto Sans JP',sans-serif" font-size="10" font-weight="700"
-          fill="var(--acc)" opacity="0.9">ここに挿入</text>`;
-    } else if (target.kind === 'node') {
-      const n  = target.target;
-      const rn = SYMS[n.type].r;
-      const tcx = n.type === 'unpan' ? n.x + rn : n.x;
-      const rx  = portXY(n, 'r').x;
-      svg += `<circle class="insert-hint-anim" cx="${tcx}" cy="${n.y}" r="${rn + 13}"
-        fill="none" stroke="var(--acc)" stroke-width="2.5" stroke-dasharray="5,3"/>
-        <g class="insert-hint-anim">
-          <rect x="${rx + 6}" y="${n.y - 11}" width="52" height="22" rx="11"
-            fill="var(--acc)" opacity="0.92"/>
-          <text x="${rx + 32}" y="${n.y + 4}" text-anchor="middle"
-            font-family="'Noto Sans JP',sans-serif" font-size="10" font-weight="700"
-            fill="white">→挿入</text>
-        </g>`;
-    }
-  }
+  svg += _insertHintSVG(target);
 
   document.getElementById('TL').innerHTML = svg;
 }
@@ -219,17 +238,19 @@ function _wouldCreateCycle(fromId, toId) {
  */
 function _extractNodeFromChain(node) {
   // メインフロー方向の入出力エッジを特定（fromPort:'r' を主フローとする）
-  const inEdge  = S.edges.find(e => e.to   === node.id && e.fromPort === 'r');
-  const outEdge = S.edges.find(e => e.from === node.id && e.fromPort === 'r');
+  const inEdges  = S.edges.filter(e => e.to   === node.id && e.fromPort === 'r');
+  const outEdges = S.edges.filter(e => e.from === node.id && e.fromPort === 'r');
 
   // ノードに繋がる全エッジを除去
   S.edges = S.edges.filter(e => e.from !== node.id && e.to !== node.id);
 
   // 前後ノードが存在する場合はブリッジ接続を追加してチェーンを維持
-  if (inEdge && outEdge) {
-    const pred = N(inEdge.from);
-    const succ = N(outEdge.to);
-    if (pred && succ) {
+  // （合流点などで入出力が複数ある場合も全ペアを接続して分断を防ぐ）
+  for (const ie of inEdges) {
+    for (const oe of outEdges) {
+      const pred = N(ie.from);
+      const succ = N(oe.to);
+      if (!pred || !succ || pred.id === succ.id) continue;
       const hidden = isBase(pred.type) || isBase(succ.type);
       _addEdgeSafe(pred.id, 'r', succ.id, 'l', hidden ? { hidden: true } : {});
     }
@@ -427,6 +448,43 @@ function _doChartInsert(node, target) {
   return true;
 }
 
+/**
+ * 新規記号を (wx, wy) に配置する（パレットドラッグ / 配置モードクリック共通）。
+ * フロー線（エッジ）や既存記号の上にドロップされた場合はその位置へ挿入し、
+ * 何もない場所へのドロップは従来どおり選択中ノードの直後に追加・自動接続する。
+ * @returns {object} 生成したノード
+ */
+function placeSymbolAt(type, wx, wy, prevSelId) {
+  const sp = snapP(wx, wy);
+  pushUndo();
+  // 挿入判定はグリッド吸着前のドロップ位置で行う（吸着による誤ターゲットを防ぐ）
+  const node = mkNode(type, wx, wy);
+  S.nodes.push(node);
+  const target = _findInsertTarget(node);
+  node.x = sp.x; node.y = sp.y;
+  const inserted = _doChartInsert(node, target);
+
+  if (inserted) {
+    // 挿入後に整列と整合チェックを自動実行
+    syncChartFromListOrder();
+    validateGraph();
+    const n = Object.keys(graphErrors).length;
+    setStatus(n > 0
+      ? `工程を挿入しました — ルール違反が ${n} 件あります`
+      : '工程を挿入しました — 整列・ルールチェック OK');
+  } else {
+    // 空き領域へのドロップ: 選択中ノードのグループ・並び順を引き継いで自動接続
+    if (prevSelId) node.groupId = N(prevSelId)?.groupId ?? null;
+    _insertInListOrder(node.id, prevSelId);
+    autoConnect(node, prevSelId);
+  }
+
+  S.sel = { kind:'node', id:node.id };
+  document.getElementById('TL').innerHTML = '';
+  redraw();
+  return node;
+}
+
 // ── 複数選択 ────────────────────────────────────
 // S.sel = { kind:'multi', ids:string[] } で複数選択状態を表す
 
@@ -531,12 +589,15 @@ function initEvents() {
     if (IA.kind === 'move') {
       const node = N(IA.id); if (!node) return;
       // ゴースト位置を追跡（ノード自体は元位置を維持→接続線はそのまま表示）
-      IA.ghostX = snapV(IA.ox + (w.x - IA.mx));
-      IA.ghostY = snapV(IA.oy + (w.y - IA.my));
+      const rawX = IA.ox + (w.x - IA.mx);
+      const rawY = IA.oy + (w.y - IA.my);
+      IA.ghostX = snapV(rawX);
+      IA.ghostY = snapV(rawY);
       IA.moved = true;
-      // インサート候補検知: 一時的にゴースト位置へ移動して検索後に戻す
+      // インサート候補検知: グリッド吸着前の実ポインタ位置で判定する
+      // （スナップ後の座標だと隣接ノードに吸着して意図しないターゲットになるため）
       const origX = node.x, origY = node.y;
-      node.x = IA.ghostX; node.y = IA.ghostY;
+      node.x = rawX; node.y = rawY;
       IA.insertTarget = _findInsertTarget(node);
       node.x = origX; node.y = origY;
       // ゴーストノード + 挿入ヒントを TL レイヤーに描画
@@ -617,24 +678,18 @@ function initEvents() {
   });
 
   cvs.addEventListener('mousedown', ev => {
-    if (ev.target.closest('.ng') || ev.target.closest('.eg') || ev.target.closest('.mg')) return;
     const w = c2w(ev.clientX, ev.clientY);
 
-    if (placeType) {
-      const sp = snapP(w.x, w.y);
-      pushUndo();
+    // 配置モード中はノード・エッジのヒット領域より配置操作を優先する
+    // （フロー線の上をクリックしたときに挿入されず無反応になるのを防ぐ）
+    if (placeType && ev.button === 0) {
       const prevSelId = S.sel?.kind === 'node' ? S.sel.id : null;
-      const node = mkNode(placeType, sp.x, sp.y);
-      // 選択中ノードのグループを引き継ぐ
-      if (prevSelId) node.groupId = N(prevSelId)?.groupId ?? null;
-      S.nodes.push(node);
-      // listOrder: 選択中ノードの直後に挿入（なければ末尾）
-      _insertInListOrder(node.id, prevSelId);
-      autoConnect(node, prevSelId);
-      S.sel = { kind:'node', id:node.id };
-      document.getElementById('TL').innerHTML = '';
-      redraw(); return;
+      // フロー線・記号上なら挿入、それ以外は選択中ノードから自動接続
+      placeSymbolAt(placeType, w.x, w.y, prevSelId);
+      return;
     }
+
+    if (ev.target.closest('.ng') || ev.target.closest('.eg') || ev.target.closest('.mg')) return;
 
     if (ev.button === 1 || (ev.button === 0 && spaceHeld)) {
       ev.preventDefault();

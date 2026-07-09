@@ -2230,7 +2230,8 @@ function _lfChartSectionHTML(chart, isActive) {
       </div>
     </div>` + metaFormHTML;
   } else {
-    const gidBB = _cd.backboneGroupId || (_cd.groups.length ? _cd.groups[0].id : null);
+    const explicitBB = _cd.groups.some(g => g.id === _cd.backboneGroupId) ? _cd.backboneGroupId : null;
+    const gidBB = explicitBB || findLongestLineGroupId(_cd.nodes, _cd.groups);
     const bbG   = gidBB ? _cd.groups.find(g => g.id === gidBB) : null;
     const bbBadge = bbG
       ? `<span class="lf-chart-bb" style="border-color:${bbG.color};color:${bbG.color}" title="背骨: ${esc(bbG.label)}"><i class="fa-solid fa-bone"></i></span>`
@@ -3488,15 +3489,9 @@ function buildPalette() {
           const r = document.getElementById('cvs').getBoundingClientRect();
           if (uev.clientX >= r.left && uev.clientX <= r.right &&
               uev.clientY >= r.top  && uev.clientY <= r.bottom) {
-            const w  = c2w(uev.clientX, uev.clientY);
-            const sp = snapP(w.x, w.y);
-            pushUndo();
-            const node = mkNode(placeType, sp.x, sp.y);
-            if (prevSelId) node.groupId = N(prevSelId)?.groupId ?? null;
-            S.nodes.push(node);
-            _insertInListOrder(node.id, prevSelId);
-            autoConnect(node, prevSelId);
-            S.sel = { kind:'node', id:node.id };
+            const w = c2w(uev.clientX, uev.clientY);
+            // フロー線・記号上へのドロップは挿入、それ以外は自動接続配置
+            placeSymbolAt(placeType, w.x, w.y, prevSelId);
           }
           cancelPlace(); redraw();
         }
@@ -3565,15 +3560,9 @@ function buildChartPalBar() {
           const r = document.getElementById('cvs').getBoundingClientRect();
           if (uev.clientX >= r.left && uev.clientX <= r.right &&
               uev.clientY >= r.top  && uev.clientY <= r.bottom) {
-            const w  = c2w(uev.clientX, uev.clientY);
-            const sp = snapP(w.x, w.y);
-            pushUndo();
-            const node = mkNode(placeType, sp.x, sp.y);
-            if (prevSelId) node.groupId = N(prevSelId)?.groupId ?? null;
-            S.nodes.push(node);
-            _insertInListOrder(node.id, prevSelId);
-            autoConnect(node, prevSelId);
-            S.sel = { kind:'node', id:node.id };
+            const w = c2w(uev.clientX, uev.clientY);
+            // フロー線・記号上へのドロップは挿入、それ以外は自動接続配置
+            placeSymbolAt(placeType, w.x, w.y, prevSelId);
           }
           cancelPlace(); // 内部で _syncChartPalBar を呼ぶ
           redraw();
@@ -3616,8 +3605,10 @@ function cancelPlace() {
 function showGhost(wx, wy) {
   if (!placeType) { document.getElementById('TL').innerHTML = ''; return; }
   const sp = snapP(wx, wy);
-  document.getElementById('TL').innerHTML =
-    `<g transform="translate(${sp.x},${sp.y})" opacity=".4" pointer-events="none">${drawSym(placeType, 0, 0)}</g>`;
+  // 挿入候補（フロー線・記号）の検出はグリッド吸着前の実ポインタ位置で行う
+  const probe  = { id: '__ghost__', type: placeType, x: wx, y: wy };
+  const target = _findInsertTarget(probe);
+  _renderGhostAndHint(probe, sp.x, sp.y, target);
 }
 
 // ═══════════════════════════════════════════════
@@ -3831,7 +3822,8 @@ function updateChartsPanel() {
     const cd        = isActive
       ? { nodes: S.nodes, groups: S.groups, backboneGroupId: S.backboneGroupId }
       : getChartData(c);
-    const gidBB     = cd.backboneGroupId || (cd.groups.length > 0 ? cd.groups[0].id : null);
+    const gidBB     = (cd.groups.some(g => g.id === cd.backboneGroupId) ? cd.backboneGroupId : null)
+      || findLongestLineGroupId(cd.nodes, cd.groups);
     const bbGroup   = gidBB ? cd.groups.find(g => g.id === gidBB) : null;
     const isAuto    = !cd.backboneGroupId && bbGroup;
     const nodeCount = cd.nodes.length;
@@ -3997,7 +3989,7 @@ function openChartBackbonePop(cid, btn) {
   pop.id = '_chart_bb_pop'; pop.className = 'fl-pop group-pop';
 
   const options =[
-    { id: null, label: '自動（最初のグループ）', color: '#94a3b8' },
+    { id: null, label: '自動（一番長いライン）', color: '#94a3b8' },
     ...groups.map(g => ({ id: g.id, label: g.label, color: g.color })),
   ];
   const cur = c.backboneGroupId;
@@ -4168,7 +4160,8 @@ function _buildRouteTableHTML(rows, columns, headerMode, groupRows) {
       const isExp    = _routemapExpanded.has(cid);
       const chart    = W.charts.find(c => c.id === cid);
       const groups   = chart?.groups || [];
-      const bbGid    = chart?.backboneGroupId || groups[0]?.id || null;
+      const bbGid    = (groups.some(g => g.id === chart?.backboneGroupId) ? chart.backboneGroupId : null)
+        || findLongestLineGroupId(chart?.nodes || [], groups);
       const selGrps  = _routemapGroupSel.has(cid)
         ? _routemapGroupSel.get(cid)
         : (bbGid ? new Set([bbGid]) : new Set());
@@ -4317,7 +4310,8 @@ function toggleRmGroupExpand(cid) {
 function toggleRmGroupCheck(cid, gid, checked) {
   const chart = W.charts.find(c => c.id === cid); if (!chart) return;
   const cd    = getChartData(chart);
-  const bbGid = cd.backboneGroupId || cd.groups[0]?.id || null;
+  const bbGid = (cd.groups.some(g => g.id === cd.backboneGroupId) ? cd.backboneGroupId : null)
+    || findLongestLineGroupId(cd.nodes, cd.groups);
   // 現在の選択Set（明示指定 or デフォルト）を取得・複製
   let sel = _routemapGroupSel.has(cid)
     ? new Set(_routemapGroupSel.get(cid))

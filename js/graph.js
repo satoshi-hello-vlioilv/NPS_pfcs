@@ -106,22 +106,31 @@ function portXY(node, port) {
   }
 }
 
-function routePath(fn, fp, tn, tp) {
+/**
+ * エッジの描画経路を折れ線の頂点配列で返す（routePath と同一規則）。
+ * ヒットテスト・挿入ヒント位置の計算に使用する。
+ */
+function _edgePolyPoints(fn, fp, tn, tp) {
   const a = portXY(fn, fp), b = portXY(tn, tp);
   const H = p => p === 'l' || p === 'r';
   const V = p => p === 't' || p === 'b';
   if (H(fp) && H(tp)) {
-    if (Math.abs(a.y - b.y) < 1) return `M${a.x} ${a.y}L${b.x} ${b.y}`;
+    if (Math.abs(a.y - b.y) < 1) return [a, b];
     const mx = (a.x + b.x) / 2;
-    return `M${a.x} ${a.y}L${mx} ${a.y}L${mx} ${b.y}L${b.x} ${b.y}`;
+    return [a, { x: mx, y: a.y }, { x: mx, y: b.y }, b];
   }
   if (V(fp) && V(tp)) {
-    if (Math.abs(a.x - b.x) < 1) return `M${a.x} ${a.y}L${b.x} ${b.y}`;
+    if (Math.abs(a.x - b.x) < 1) return [a, b];
     const my = (a.y + b.y) / 2;
-    return `M${a.x} ${a.y}L${a.x} ${my}L${b.x} ${my}L${b.x} ${b.y}`;
+    return [a, { x: a.x, y: my }, { x: b.x, y: my }, b];
   }
-  if (H(fp) && V(tp)) return `M${a.x} ${a.y}L${b.x} ${a.y}L${b.x} ${b.y}`;
-  return `M${a.x} ${a.y}L${a.x} ${b.y}L${b.x} ${b.y}`;
+  if (H(fp) && V(tp)) return [a, { x: b.x, y: a.y }, b];
+  return [a, { x: a.x, y: b.y }, b];
+}
+
+function routePath(fn, fp, tn, tp) {
+  const pts = _edgePolyPoints(fn, fp, tn, tp);
+  return 'M' + pts.map(p => `${p.x} ${p.y}`).join('L');
 }
 
 function palIcoSVG(type, sz = 32) {
@@ -139,15 +148,24 @@ function getTopoOrder() {
   const re   = S.edges.filter(e => e.fromPort === 'r');
   const adj  = {}, indeg = {};
   for (const n of S.nodes) { adj[n.id] = []; indeg[n.id] = 0; }
-  for (const e of re) { adj[e.from].push(e.to); indeg[e.to] = (indeg[e.to] || 0) + 1; }
-  const q    = S.nodes.filter(n => !indeg[n.id]).map(n => n.id);
+  for (const e of re) {
+    if (!(e.from in adj) || !(e.to in indeg)) continue; // 欠損ノード参照を無視
+    adj[e.from].push(e.to); indeg[e.to]++;
+  }
+  // 現在の listOrder 位置をタイブレークに使う安定トポロジカルソート。
+  // エッジ制約がない範囲では既存の並び順を維持する（グループ交錯を防ぐ）。
+  const pos  = new Map(S.listOrder.map((id, i) => [id, i]));
+  const prio = id => (pos.has(id) ? pos.get(id) : Infinity);
+  const avail = S.nodes.filter(n => !indeg[n.id]).map(n => n.id);
   const ord  = [];
   const seen = new Set();
-  while (q.length) {
-    const id = q.shift();
+  while (avail.length) {
+    let bi = 0;
+    for (let i = 1; i < avail.length; i++) if (prio(avail[i]) < prio(avail[bi])) bi = i;
+    const id = avail.splice(bi, 1)[0];
     if (seen.has(id)) continue;
     seen.add(id); ord.push(id);
-    for (const c of (adj[id] || [])) { if (--indeg[c] === 0) q.push(c); }
+    for (const c of (adj[id] || [])) { if (--indeg[c] === 0) avail.push(c); }
   }
   for (const n of S.nodes) if (!seen.has(n.id)) ord.push(n.id);
   return ord;
@@ -216,7 +234,9 @@ function _getGroupedOrder() {
     result.push({ groupId: g.id, group: g, nodes });
     nodes.forEach(n => seen.add(n.id));
   }
-  const ungrouped = S.listOrder.map(id => N(id)).filter(n => n && !n.groupId && !seen.has(n.id));
+  // groupId が未設定または実在しないグループを指すノードは「グループなし」行へ
+  const ungrouped = S.listOrder.map(id => N(id))
+    .filter(n => n && !seen.has(n.id) && (!n.groupId || !G(n.groupId)));
   result.push({ groupId: null, group: null, nodes: ungrouped });
   return result;
 }

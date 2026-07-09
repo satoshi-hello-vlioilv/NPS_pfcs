@@ -670,6 +670,27 @@ function _scheduleLS() {
   _lsTimer = setTimeout(saveLS, 600);
 }
 
+// ── 無名グループ（グループ未指定工程の受け皿）─────
+
+/**
+ * 無選択で作成された工程の受け皿となる「無名グループ」のIDを返す。
+ * 存在しなければ自動生成する。グループに属させておくことで、
+ * 作成後のグループ操作（名称変更・合流・背骨設定など）が容易になる。
+ */
+function ensureDefaultGroup() {
+  let g = (S.groups || []).find(x => x.isDefault);
+  if (!g) {
+    g = {
+      id:    uid(),
+      label: '無名グループ',
+      color: GROUP_COLORS[(S.groups || []).length % GROUP_COLORS.length],
+      isDefault: true,
+    };
+    S.groups.push(g);
+  }
+  return g.id;
+}
+
 // ── リストOrder 挿入ヘルパー ──────────────────────
 
 function _insertInListOrder(nodeId, afterId) {

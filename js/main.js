@@ -474,7 +474,12 @@ function placeSymbolAt(type, wx, wy, prevSelId) {
       : '工程を挿入しました — 整列・ルールチェック OK');
   } else {
     // 空き領域へのドロップ: 選択中ノードのグループ・並び順を引き継いで自動接続
-    if (prevSelId) node.groupId = N(prevSelId)?.groupId ?? null;
+    if (prevSelId) {
+      node.groupId = N(prevSelId)?.groupId ?? null;
+    } else {
+      // 無選択で作成された工程は無名グループに所属させる
+      node.groupId = ensureDefaultGroup();
+    }
     _insertInListOrder(node.id, prevSelId);
     autoConnect(node, prevSelId);
   }
@@ -715,15 +720,34 @@ function initEvents() {
     } else if (kind === 'move') {
       document.getElementById('TL').innerHTML = '';
       if (IA.moved) {
-        const node = N(IA.id);
-        if (node) {
-          // ドロップ確定：ゴースト位置をノードの実座標に適用
-          node.x = IA.ghostX ?? node.x;
-          node.y = IA.ghostY ?? node.y;
+        const { id, ox, oy, ghostX, ghostY, insertTarget, snap0 } = IA;
+        // redraw の前に IA をクリアする（ドラッグ中表示クラス
+        // node-dragging-src が確定後のノードに残るのを防ぐ）
+        IA = null;
+
+        const node = N(id);
+        const hasEdges = node && S.edges.some(e => e.from === node.id || e.to === node.id);
+        const inserted = node ? _doChartInsert(node, insertTarget) : false;
+
+        if (node && !inserted && hasEdges) {
+          // フローに接続済みの記号は「挿入 or 元に戻す」:
+          // 挿入先のない場所へのドロップで接続を保ったまま座標だけ移動すると
+          // 線が引き伸ばされてチャートが崩れるため、元の位置に戻す。
+          node.x = ox;
+          node.y = oy;
+          setStatus('挿入先がないため元の位置に戻しました — 線や記号の上にドロップすると挿入できます');
+          redraw();
+          return;
         }
-        const inserted = node ? _doChartInsert(node, IA.insertTarget) : false;
+
+        if (node && !inserted) {
+          // 未接続の単独記号は従来どおり自由に移動できる
+          node.x = ghostX ?? node.x;
+          node.y = ghostY ?? node.y;
+        }
+
         graphErrors = {};
-        S._undo.push(IA.snap0);
+        S._undo.push(snap0);
         if (S._undo.length > 100) S._undo.shift();
         S._redo = []; rUB();
         if (inserted) {

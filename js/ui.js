@@ -3006,9 +3006,10 @@ function addNodeFromList(type) {
   pushUndo();
 
   // 選択中ノードまたは最後のノードのグループを引き継ぐ
+  // （参照ノードがない＝最初の工程は無名グループに所属させる）
   const refNode   = S.sel?.kind === 'node' ? N(S.sel.id)
     : (S.listOrder.length ? N(S.listOrder[S.listOrder.length - 1]) : null);
-  const groupId   = refNode?.groupId || null;
+  const groupId   = refNode ? (refNode.groupId || null) : ensureDefaultGroup();
   const prevSelId = S.sel?.kind === 'node' ? S.sel.id : (refNode?.id || null);
 
   // チャート上位置

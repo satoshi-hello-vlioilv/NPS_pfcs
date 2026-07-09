@@ -1,0 +1,882 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>NPS 工程図 エディタ</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<!-- ═══════ ヘッダー ═══════ -->
+<header id="hdr">
+  <div class="hdr-left">
+    <h1>
+      <i class="fa-solid fa-diagram-predecessor logo-icon"></i>
+      NPS 工程図
+    </h1>
+  </div>
+  <div class="hdr-center" id="chart-tools">
+    <button class="tbtn" id="bundo" onclick="undo()" disabled title="元に戻す (Ctrl+Z)">
+      <i class="fa-solid fa-rotate-left"></i> 戻る
+    </button>
+    <button class="tbtn" id="bredo" onclick="redo()" disabled title="やり直す (Ctrl+Y)">
+      <i class="fa-solid fa-rotate-right"></i> 進む
+    </button>
+    <div class="tsep"></div>
+    <button class="tbtn icon-only" onclick="doZoom(1/1.2)" title="縮小">
+      <i class="fa-solid fa-minus"></i>
+    </button>
+    <span class="zdsp" id="zdsp">100%</span>
+    <button class="tbtn icon-only" onclick="doZoom(1.2)" title="拡大">
+      <i class="fa-solid fa-plus"></i>
+    </button>
+    <button class="tbtn" onclick="resetView()" title="100%表示">100%</button>
+    <button class="tbtn" onclick="fitView()" title="全体を画面に合わせる">
+      <i class="fa-solid fa-expand"></i> 全体表示
+    </button>
+    <div class="tsep"></div>
+    <button class="tbtn on" id="btn-nums" onclick="toggleNums()"
+      title="加工・検査に通し番号を表示/非表示">
+      <i class="fa-solid fa-list-ol"></i> 番号表示
+    </button>
+    <button class="tbtn" onclick="alignLayout()"
+      title="記号間隔を均等に整列し、ルールをチェックします">
+      <i class="fa-solid fa-align-center"></i> 整列・チェック
+    </button>
+  </div>
+    <div class="hdr-right">
+    <div class="imp-mode-group" title="改善前/改善後モードを切り替え">
+      <span class="imp-mode-label">改善</span>
+      <button class="imp-mode-btn active" data-mode="before" onclick="setImprovementMode('before')">改善前</button>
+      <button class="imp-mode-btn" data-mode="after" onclick="setImprovementMode('after')">改善後</button>
+    </div>
+    <div class="tsep"></div>
+    <button class="tbtn danger" onclick="clearAll()" title="全データを消去">
+      <i class="fa-solid fa-trash-can"></i> 全消去
+    </button>
+    <div class="tsep"></div>
+    <button class="tbtn" onclick="trigLoad()" title="JSONファイルを読み込む">
+      <i class="fa-solid fa-folder-open"></i> 読込
+    </button>
+    <input type="file" id="fload" accept=".json" style="display:none" onchange="loadJ(event)">
+    <button class="tbtn" onclick="saveJ()" title="JSONファイルに保存">
+      <i class="fa-solid fa-floppy-disk"></i> 保存
+    </button>
+    <button class="tbtn" onclick="window.print()" title="印刷">
+      <i class="fa-solid fa-print"></i> 印刷
+    </button>
+    <button class="tbtn" onclick="openExportDialog()" title="工程図をPNGで画像保存（A4）">
+      <i class="fa-solid fa-image"></i> 画像保存
+    </button>
+    <div class="tsep"></div>
+    <button class="tbtn icon-only" id="rp-toggle-btn" onclick="toggleDrawer()"
+      title="プロパティパネルを開く / 閉じる">
+      <i class="fa-solid fa-table-columns"></i>
+    </button>
+  </div>
+</header>
+<!-- ═══════ メイン ═══════ -->
+<div id="main">
+  <div id="main-body">
+    <!-- 左パレット（全高）-->
+    <aside id="sid">
+      <div class="pmbar" id="pmbar">
+        <i class="fa-solid fa-crosshairs"></i>
+        キャンバスをクリックして配置
+        <span class="pmbar-sub"><i class="fa-solid fa-keyboard"></i> Esc でキャンセル</span>
+      </div>
+      <div id="pal-scroll"><div id="pal-acc"></div></div>
+      <!-- ═══ リストモード専用サイドバー ═══ -->
+      <div id="sid-list" style="display:none">
+        <div class="slist-hdr">
+          <i class="fa-solid fa-list-check"></i>
+          <span>工程リスト</span>
+          <span class="slist-chart-cnt" id="slist-chart-cnt">1 工程図</span>
+        </div>
+        <!-- 新規工程図 -->
+        <button class="slist-btn slist-btn-newchart" onclick="addNewChartFromList()" title="新しい工程図を追加">
+          <span class="slist-btn-ico" style="color:#6366f1"><i class="fa-solid fa-file-circle-plus"></i></span>
+          <span class="slist-btn-body">
+            <span class="slist-btn-lbl">新規工程図</span>
+            <span class="slist-btn-hint">工程図を追加</span>
+          </span>
+        </button>
+        <div class="slist-divider"></div>
+        <div class="slist-section-lbl"><i class="fa-solid fa-circle-dot" style="color:#6366f1;font-size:8px"></i> 編集中の工程図</div>
+        <button class="slist-btn" onclick="openListBackbonePop(this)" title="この工程図の背骨グループを指定（工程経路図の比較基準）">
+          <span class="slist-btn-ico" style="color:#d97706"><i class="fa-solid fa-bone"></i></span>
+          <span class="slist-btn-body">
+            <span class="slist-btn-lbl">背骨グループ設定</span>
+            <span class="slist-btn-hint" id="backbone-hint">（未設定）</span>
+          </span>
+        </button>
+        <button class="slist-btn" onclick="showAddGroupForm()" title="新規グループを追加して工程を整理">
+          <span class="slist-btn-ico"><i class="fa-solid fa-layer-group"></i></span>
+          <span class="slist-btn-body">
+            <span class="slist-btn-lbl">グループ追加</span>
+            <span class="slist-btn-hint">記号をまとめて整理</span>
+          </span>
+        </button>
+        <button class="slist-btn slist-btn-primary" onclick="buildChartFromList()" title="リスト構造をもとにチャートを自動配置・接続">
+          <span class="slist-btn-ico"><i class="fa-solid fa-wand-magic-sparkles"></i></span>
+          <span class="slist-btn-body">
+            <span class="slist-btn-lbl">チャートに反映</span>
+            <span class="slist-btn-hint">リストから自動レイアウト</span>
+          </span>
+        </button>
+        <div class="slist-tip">
+          <i class="fa-solid fa-circle-info"></i>
+          工程をドラッグして別工程図に転送できます
+        </div>
+      </div>
+      <!-- ═══ 能力表モード：サイドバー ═══ -->
+      <!-- ═══ 能力表モード：工程図・部品選択サイドバー ═══ -->
+      <div id="sid-capacity" style="display:none;flex-direction:column;overflow:hidden;height:100%">
+        <div class="cap-side-hdr2">
+          <div class="cap-side-hdr2-top">
+            <span class="cap-side-hdr2-title">
+              <i class="fa-solid fa-chart-gantt"></i> 工程図
+            </span>
+          </div>
+          <div class="cap-side-hdr2-acts">
+            <button class="cap-side-foot-btn" onclick="openMachineMasterModal()" title="機械マスタ">
+              <i class="fa-solid fa-gears"></i>
+            </button>
+            <button class="cap-side-foot-btn" onclick="openGroupMasterModal()" title="グループ設定">
+              <i class="fa-solid fa-layer-group"></i>
+            </button>
+          </div>
+        </div>
+        <div id="cap-chart-list" class="cap-chart-list-scroll"></div>
+      </div>
+
+      <!-- ═══ 工程経路図モード：工程図管理 + 経路図選択を統合したサイドバー ═══ -->
+      <div id="sid-routemap" style="display:none;flex-direction:column;overflow:hidden;height:100%">
+        <div class="rm-side-hdr">
+          <div class="rm-side-hdr-top">
+            <span class="rm-side-title">
+              <i class="fa-solid fa-layer-group"></i> 工程図
+            </span>
+            <span class="charts-count-badge" id="charts-count">0 件</span>
+          </div>
+          <div class="rm-side-acts">
+            <button class="tbtn rm-sel-btn" onclick="selectAllRoutemapCharts()" title="全て経路図に含める">
+              <i class="fa-solid fa-check-double"></i> 全選択
+            </button>
+            <button class="tbtn rm-sel-btn" onclick="clearRoutemapCharts()" title="経路図選択を解除">
+              <i class="fa-solid fa-xmark"></i> 解除
+            </button>
+            <button class="btn bp rm-new-btn" onclick="addNewChart()" title="新規工程図を作成">
+              <i class="fa-solid fa-file-circle-plus"></i> 新規
+            </button>
+          </div>
+        </div>
+        <div id="rm-chart-sel" class="rm-chart-sel"></div>
+      </div>
+    </aside>
+    <!-- 右エリア（タブ + コンテンツ）-->
+    <div id="right-area">
+      <!-- ビュー切り替えタブ（右エリアのみ → 近接の法則）-->
+      <nav id="main-tabs">
+        <button class="vtab active" id="tab-chart" onclick="switchView('chart')">
+          <i class="fa-solid fa-diagram-project"></i> チャート
+        </button>
+        <button class="vtab" id="tab-list" onclick="switchView('list')">
+          <i class="fa-solid fa-list-check"></i> リスト
+        </button>
+        <button class="vtab" id="tab-routemap" onclick="switchView('routemap')">
+          <i class="fa-solid fa-table-cells"></i> 工程経路図
+        </button>
+        <button class="vtab" id="tab-capacity" onclick="switchView('capacity')">
+          <i class="fa-solid fa-chart-gantt"></i> 部品別工程別能力表
+        </button>
+        <div class="active-chart-indicator">
+          <i class="fa-solid fa-circle-dot" style="color:#6366f1;font-size:9px"></i>
+          <span id="active-chart-name-display">工程図</span>
+        </div>
+      </nav>
+      <div id="main-content">
+        <!-- ── チャートビュー ── -->
+        <div id="view-chart" class="view-pane active">
+          <!-- 簡易パレットバー（チャートビュー上部） -->
+          <div id="chart-pal-bar"></div>
+          <div id="cwrap" style="position:relative;">
+            <div id="band-div"></div>
+            <div id="band-info"></div>
+            <svg id="cvs" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <pattern id="gm" width="20" height="20" patternUnits="userSpaceOnUse">
+                  <path d="M20 0L0 0 0 20" fill="none" stroke="#e2e8f0" stroke-width=".5"/>
+                </pattern>
+                <pattern id="gM" width="100" height="100" patternUnits="userSpaceOnUse">
+                  <rect width="100" height="100" fill="url(#gm)"/>
+                  <path d="M100 0L0 0 0 100" fill="none" stroke="#cbd5e1" stroke-width="1"/>
+                </pattern>
+                <filter id="bsh">
+                  <feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-color="#00000015"/>
+                </filter>
+              </defs>
+              <g id="vp">
+                <rect x="-9000" y="-9000" width="18000" height="18000" fill="white"/>
+                <rect x="-9000" y="-9000" width="18000" height="18000" fill="url(#gM)"/>
+                <g id="ML"></g>
+                <g id="EL"></g>
+                <g id="NL"></g>
+                <g id="TL"></g>
+              </g>
+            </svg>
+          </div><!-- /cwrap -->
+          <!-- ── フローティング操作ガイド ── -->
+          <div id="guide-float" class="gf-hidden">
+            <div class="gf-hdr">
+              <span><i class="fa-solid fa-keyboard"></i> 操作ガイド</span>
+              <button class="gf-close" onclick="toggleGuide()" title="閉じる">
+                <i class="fa-solid fa-xmark"></i>
+              </button>
+            </div>
+            <div class="gf-body">
+              <div class="guide-row"><i class="fa-solid fa-hand-pointer fa-fw"></i><span><b>配置</b> 記号クリック or ドラッグ</span></div>
+              <div class="guide-row"><i class="fa-solid fa-up-down-left-right fa-fw"></i><span><b>移動</b> 記号をドラッグ</span></div>
+              <div class="guide-row"><i class="fa-solid fa-arrow-right fa-fw"></i><span><b>接続</b> 右 ● をドラッグ</span></div>
+              <div class="guide-row"><i class="fa-solid fa-pen fa-fw"></i><span><b>編集</b> ダブルクリック</span></div>
+              <div class="guide-row"><i class="fa-solid fa-magnifying-glass-plus fa-fw"></i><span><b>ズーム</b> <span class="kbd">ホイール</span></span></div>
+              <div class="guide-row"><i class="fa-solid fa-hand fa-fw"></i><span><b>パン</b> <span class="kbd">Space</span>+ドラッグ</span></div>
+              <div class="guide-row"><i class="fa-solid fa-delete-left fa-fw"></i><span><b>削除</b> <span class="kbd">Del</span></span></div>
+            </div>
+          </div>
+          <!-- ガイドトグルボタン -->
+          <button id="guide-toggle-btn" onclick="toggleGuide()" title="操作ガイドを表示 / 非表示">
+            <i class="fa-solid fa-keyboard"></i>
+          </button>
+        </div><!-- /view-chart -->
+        <!-- ── リストビュー ── -->
+        <div id="view-list" class="view-pane">
+          <div id="lp-main">
+            <!-- ミニパレット: リストビューから直接記号を追加 -->
+            <div class="lp-palette" id="lp-palette"></div>
+            <div class="lp-cols">
+              <div title="並び替え">順序</div>
+              <div style="text-align:center">番号</div>
+              <div style="text-align:center">記号</div>
+              <div>工程名</div>
+              <div style="text-align:center">種別</div>
+              <div>メモ</div>
+              <div style="text-align:center">バッジ</div>
+              <div style="text-align:center">操作</div>
+            </div>
+            <div class="lp-body" id="lp-body"></div>
+            <div class="lp-footer">
+              <span id="lp-cnt">0件</span>
+              <span><i class="fa-solid fa-grip-vertical"></i> をドラッグして順序変更</span>
+            </div>
+          </div>
+        </div><!-- /view-list -->
+
+
+        <!-- ── 工程経路図ビュー ── -->
+        <div id="view-routemap" class="view-pane">
+          <div id="routemap-main">
+            <div class="rm-header">
+              <div class="rm-header-left">
+                <i class="fa-solid fa-table-cells"></i>
+                <h2>工程経路図</h2>
+                <span class="rm-stats-badge" id="rm-stats"></span>
+              </div>
+
+              <!-- 列ヘッダー表示モード（3択セグメント）-->
+              <div class="rm-ctrl-section">
+                <span class="rm-ctrl-lbl">列ヘッダー</span>
+                <div class="rm-seg-grp" role="group" aria-label="列ヘッダー表示モード">
+                  <button class="rm-seg-btn" id="rm-hdr-normal"
+                    onclick="setRoutemapHeaderMode('normal')"
+                    title="通常：工程名を横書きで全表示">
+                    <i class="fa-solid fa-grip-lines"></i>
+                    <span>通常</span>
+                  </button>
+                  <button class="rm-seg-btn" id="rm-hdr-compact"
+                    onclick="setRoutemapHeaderMode('compact')"
+                    title="横コンパクト：工程名を省略表示">
+                    <i class="fa-solid fa-minus"></i>
+                    <span>横</span>
+                  </button>
+                  <button class="rm-seg-btn active" id="rm-hdr-vertical"
+                    onclick="setRoutemapHeaderMode('vertical')"
+                    title="縦書き：最省スペース（列幅最小）">
+                    <i class="fa-solid fa-arrow-up"></i>
+                    <span>縦</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- テーブル分割モード（2択セグメント）-->
+              <div class="rm-ctrl-section">
+                <span class="rm-ctrl-lbl">テーブル</span>
+                <div class="rm-seg-grp" role="group" aria-label="テーブル表示モード">
+                  <button class="rm-seg-btn active" id="rm-tbl-merged"
+                    onclick="setRoutemapSplit(false)"
+                    title="統合：工程名が共通する工程図を1つの表に">
+                    <i class="fa-solid fa-table"></i>
+                    <span>統合</span>
+                  </button>
+                  <button class="rm-seg-btn" id="rm-tbl-split"
+                    onclick="setRoutemapSplit(true)"
+                    title="分割：工程図ごとに別の表で並べて表示">
+                    <i class="fa-solid fa-table-columns"></i>
+                    <span>分割</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- 行の単位（背骨のみ / グループ別）-->
+              <div class="rm-ctrl-section">
+                <span class="rm-ctrl-lbl">行の単位</span>
+                <div class="rm-seg-grp" role="group" aria-label="行の表示単位">
+                  <button class="rm-seg-btn active" id="rm-row-backbone"
+                    onclick="setRoutemapRowMode('backbone')"
+                    title="背骨のみ：各工程図の背骨グループを1行で表示">
+                    <i class="fa-solid fa-bone"></i>
+                    <span>背骨</span>
+                  </button>
+                  <button class="rm-seg-btn" id="rm-row-groups"
+                    onclick="setRoutemapRowMode('groups')"
+                    title="グループ別：各グループ（部品）を個別行で展開表示">
+                    <i class="fa-solid fa-layer-group"></i>
+                    <span>グループ別</span>
+                  </button>
+                </div>
+              </div>
+
+              <div class="rm-header-desc">
+                背骨グループの工程を横軸・工程図を縦軸として比較
+              </div>
+            </div>
+            <div id="rm-table-wrap" class="rm-table-wrap">
+              <div class="rm-empty">
+                <i class="fa-solid fa-table"></i>
+                <p>左のリストから工程図を選択してください</p>
+              </div>
+            </div>
+          </div>
+        </div><!-- /view-routemap -->
+
+        <!-- ── 能力表ビュー ── -->
+        <div id="view-capacity" class="view-pane">
+          <div id="cap-main">
+            <div class="cap-header">
+              <div class="cap-header-left">
+                <i class="fa-solid fa-chart-gantt"></i>
+                <h2>部品別工程別能力表</h2>
+                <span class="cap-mode-badge" id="cap-mode-badge">改善前</span>
+                <div class="cap-imp-toggle">
+                  <button class="imp-mode-btn active" data-mode="before" onclick="setImprovementMode('before')">改善前</button>
+                  <button class="imp-mode-btn" data-mode="after" onclick="setImprovementMode('after')">改善後</button>
+                </div>
+              </div>
+              <div class="cap-settings-bar">
+                <div class="cap-setting-item">
+                  <label class="cap-setting-lbl"><i class="fa-solid fa-clock"></i> 稼働時間</label>
+                  <div class="cap-setting-inp-wrap">
+                    <input type="number" class="cap-setting-inp" id="cap-input-optime"
+                      value="420" min="1" step="1" oninput="onCapSetting('operatingTime', this.value)">
+                    <span class="cap-setting-unit">分/日</span>
+                  </div>
+                </div>
+                <div class="cap-setting-item">
+                  <label class="cap-setting-lbl"><i class="fa-solid fa-bullseye"></i> 必要数</label>
+                  <div class="cap-setting-inp-wrap">
+                    <input type="number" class="cap-setting-inp" id="cap-input-tgtqty"
+                      value="100" min="1" step="1" oninput="onCapSetting('targetQty', this.value)">
+                    <span class="cap-setting-unit">個/日</span>
+                  </div>
+                </div>
+                <div class="cap-setting-item cap-setting-takt">
+                  <label class="cap-setting-lbl"><i class="fa-solid fa-stopwatch"></i> タクトタイム</label>
+                  <span class="cap-takt-display" id="cap-takt-val">—</span>
+                </div>
+              </div>
+            </div>
+            <div class="cap-body" id="cap-view-body">
+              <div class="cap-empty">
+                <i class="fa-solid fa-chart-simple"></i>
+                <p>工程データを追加すると能力表が表示されます</p>
+              </div>
+            </div>
+          </div>
+        </div><!-- /view-capacity -->
+
+      </div><!-- /main-content -->
+    </div><!-- /right-area -->
+  </div><!-- /main-body -->
+</div><!-- /main -->
+<!-- ═══════ ステータスバー ═══════ -->
+<div id="sbar">
+  <span id="stxt">準備完了 — 左パレットの記号をクリックして配置を開始</span>
+  <div class="sbar-k">
+    <span><span class="kbd">Ctrl+Z</span> 戻る</span>
+    <span><span class="kbd">Del</span> 削除</span>
+    <span><span class="kbd">Space</span>+ドラッグ パン</span>
+    <span><span class="kbd">ホイール</span> ズーム</span>
+  </div>
+</div>
+<div id="dnd-ghost"></div>
+<!-- ═══════ 右ドロワー プルタブ（Fitts則: 常に右端固定）═══════ -->
+<button id="rp-pull" onclick="toggleDrawer()"
+  title="プロパティパネルを開く / 閉じる"></button>
+<!-- ═══════ 右ドロワー ═══════ -->
+<aside id="rp">
+  <div class="rp-hd">
+    <span class="rp-title">
+      <i class="fa-solid fa-sliders"></i> プロパティ
+    </span>
+    <button class="tbtn icon-only" onclick="closeDrawer()" title="閉じる">
+      <i class="fa-solid fa-xmark"></i>
+    </button>
+  </div>
+  <div class="rp-props" id="prc">
+    <!-- props.js で動的生成 -->
+  </div>
+</aside>
+<!-- ═══════ 操作ガイド モーダル ═══════ -->
+<div id="guide-modal" class="modal" role="dialog" aria-modal="true" aria-label="操作ガイド">
+  <div class="modal-bg" onclick="closeGuideModal()"></div>
+  <div class="modal-panel" style="width:min(660px,95vw);max-height:min(720px,92vh);">
+    <!-- ヘッダー -->
+    <div class="m-hdr">
+      <div class="m-hdr-left">
+        <i class="fa-solid fa-keyboard m-hdr-ico"></i>
+        <h3>操作ガイド</h3>
+      </div>
+      <button class="tbtn icon-only m-close-btn" onclick="closeGuideModal()" title="閉じる (Esc)">
+        <i class="fa-solid fa-xmark"></i>
+      </button>
+    </div>
+    <!-- ボディ -->
+    <div style="flex:1;overflow-y:auto;padding:24px 28px;display:flex;flex-direction:column;gap:22px;">
+
+      <!-- セクション1: 記号の配置と編集 -->
+      <section>
+        <div class="gm-sec-hdr">
+          <i class="fa-solid fa-hand-pointer"></i>
+          <span>記号の配置と編集</span>
+        </div>
+        <div class="gm-grid">
+          <div class="gm-item">
+            <div class="gm-item-ico"><i class="fa-solid fa-hand-pointer"></i></div>
+            <div>
+              <div class="gm-item-ttl">配置</div>
+              <div class="gm-item-desc">左パレットの記号をクリック後、キャンバスをクリック。またはパレットからドラッグ</div>
+            </div>
+          </div>
+          <div class="gm-item">
+            <div class="gm-item-ico"><i class="fa-solid fa-up-down-left-right"></i></div>
+            <div>
+              <div class="gm-item-ttl">移動</div>
+              <div class="gm-item-desc">記号をドラッグして任意の位置へ移動</div>
+            </div>
+          </div>
+          <div class="gm-item">
+            <div class="gm-item-ico"><i class="fa-solid fa-arrow-right"></i></div>
+            <div>
+              <div class="gm-item-ttl">接続</div>
+              <div class="gm-item-desc">記号右側の <b>●</b> をドラッグして次の記号へつなぐ</div>
+            </div>
+          </div>
+          <div class="gm-item">
+            <div class="gm-item-ico"><i class="fa-solid fa-pen"></i></div>
+            <div>
+              <div class="gm-item-ttl">編集</div>
+              <div class="gm-item-desc">記号をダブルクリックで詳細編集ダイアログを開く</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- セクション2: キャンバス操作 -->
+      <section>
+        <div class="gm-sec-hdr">
+          <i class="fa-solid fa-display"></i>
+          <span>キャンバス操作</span>
+        </div>
+        <div class="gm-grid">
+          <div class="gm-item">
+            <div class="gm-item-ico"><i class="fa-solid fa-magnifying-glass-plus"></i></div>
+            <div>
+              <div class="gm-item-ttl">ズーム</div>
+              <div class="gm-item-desc"><span class="kbd">マウスホイール</span> で拡大・縮小</div>
+            </div>
+          </div>
+          <div class="gm-item">
+            <div class="gm-item-ico"><i class="fa-solid fa-hand"></i></div>
+            <div>
+              <div class="gm-item-ttl">パン（画面移動）</div>
+              <div class="gm-item-desc"><span class="kbd">Space</span> を押しながらドラッグ</div>
+            </div>
+          </div>
+          <div class="gm-item">
+            <div class="gm-item-ico"><i class="fa-solid fa-delete-left"></i></div>
+            <div>
+              <div class="gm-item-ttl">削除</div>
+              <div class="gm-item-desc">記号を選択して <span class="kbd">Del</span> キー</div>
+            </div>
+          </div>
+          <div class="gm-item">
+            <div class="gm-item-ico"><i class="fa-solid fa-rotate-left"></i></div>
+            <div>
+              <div class="gm-item-ttl">元に戻す / やり直し</div>
+              <div class="gm-item-desc"><span class="kbd">Ctrl</span>+<span class="kbd">Z</span> / <span class="kbd">Ctrl</span>+<span class="kbd">Y</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- セクション3: ショートカット一覧 -->
+      <section>
+        <div class="gm-sec-hdr">
+          <i class="fa-solid fa-bolt"></i>
+          <span>キーボードショートカット</span>
+        </div>
+        <div class="gm-shortcuts">
+          <div class="gm-sc-row"><span class="gm-sc-key"><span class="kbd">Ctrl</span>+<span class="kbd">S</span></span><span class="gm-sc-desc">JSONファイルに保存</span></div>
+          <div class="gm-sc-row"><span class="gm-sc-key"><span class="kbd">Ctrl</span>+<span class="kbd">Z</span></span><span class="gm-sc-desc">元に戻す（Undo）</span></div>
+          <div class="gm-sc-row"><span class="gm-sc-key"><span class="kbd">Ctrl</span>+<span class="kbd">Y</span></span><span class="gm-sc-desc">やり直し（Redo）</span></div>
+          <div class="gm-sc-row"><span class="gm-sc-key"><span class="kbd">Del</span></span><span class="gm-sc-desc">選択記号を削除</span></div>
+          <div class="gm-sc-row"><span class="gm-sc-key"><span class="kbd">Space</span>+ドラッグ</span><span class="gm-sc-desc">キャンバスをパン</span></div>
+          <div class="gm-sc-row"><span class="gm-sc-key"><span class="kbd">Esc</span></span><span class="gm-sc-desc">配置モードをキャンセル / ダイアログを閉じる</span></div>
+        </div>
+      </section>
+
+      <!-- ヒント -->
+      <div class="gm-tip">
+        <i class="fa-solid fa-lightbulb"></i>
+        <span>作業中は画面左下の <b>操作ガイド</b> ボタン（<i class="fa-solid fa-keyboard"></i>）からいつでもこの内容を確認できます。</span>
+      </div>
+    </div>
+    <!-- フッター -->
+    <div style="display:flex;justify-content:flex-end;align-items:center;padding:14px 24px;border-top:1px solid var(--bdr);background:var(--bg2);flex-shrink:0;gap:10px;">
+      <button class="btn bp" onclick="closeGuideModal()">
+        <i class="fa-solid fa-play"></i> はじめる
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ 編集モーダル ═══════ -->
+<div id="edit-modal" class="modal">
+  <div class="modal-bg" onclick="closeModal()"></div>
+  <div class="modal-panel">
+    <!-- ヘッダー（アクションボタンを右側に配置）-->
+    <div class="m-hdr">
+      <div class="m-hdr-left">
+        <i class="fa-solid fa-pen-to-square m-hdr-ico"></i>
+        <h3>工程情報の編集</h3>
+      </div>
+      <div class="m-hdr-actions">
+        <button class="m-del-btn" onclick="deleteFromModal()">
+          <i class="fa-solid fa-trash-can"></i> 削除
+        </button>
+        <button class="btn bg-w m-hdr-cancel" onclick="closeModal()">
+          <i class="fa-solid fa-xmark"></i> キャンセル
+        </button>
+        <button class="btn bp m-hdr-save" onclick="saveModal()">
+          <i class="fa-solid fa-floppy-disk"></i> 保存
+        </button>
+        <button class="tbtn icon-only m-close-btn" onclick="closeModal()" title="閉じる (Esc)">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+    </div>
+    <!-- ボディ（JS で動的生成）-->
+    <div class="m-body" id="m-body"></div>
+  </div>
+</div>
+<!-- ═══════ 能力表専用データ入力モーダル ═══════ -->
+<div id="cap-imp-modal" class="modal ci-modal">
+  <div class="ci-overlay" onclick="closeCapImpModal()"></div>
+  <div class="ci-box">
+    <div class="ci-hdr">
+      <div class="ci-hdr-left">
+        <i class="fa-solid fa-arrow-trend-up" style="color:#6366f1"></i>
+        <span class="ci-title" id="cap-imp-modal-title">改善データ</span>
+      </div>
+      <div class="ci-hdr-right">
+        <div class="ci-tabs">
+          <button class="cap-imp-tab active" data-tab="before" onclick="switchCapImpTab('before')">改善前</button>
+          <button class="cap-imp-tab" data-tab="after" onclick="switchCapImpTab('after')">改善後</button>
+        </div>
+        <button class="ci-close" onclick="closeCapImpModal()"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+    </div>
+    <div class="ci-body" id="cap-imp-modal-body"></div>
+    <div class="ci-footer">
+      <button class="btn" onclick="closeCapImpModal()">キャンセル</button>
+      <button class="btn bp" onclick="saveCapImpModal()"><i class="fa-solid fa-check"></i> 保存</button>
+    </div>
+  </div>
+</div>
+<!-- ═══════ 画像保存ダイアログ ═══════ -->
+<div id="export-modal" class="modal" role="dialog">
+  <div class="modal-bg" onclick="closeExportDialog()"></div>
+  <div class="export-panel">
+    <div class="export-hdr">
+      <div class="m-hdr-left">
+        <i class="fa-solid fa-image m-hdr-ico"></i>
+        <h3>画像保存 (PNG)</h3>
+      </div>
+      <button class="tbtn icon-only m-close-btn" onclick="closeExportDialog()" title="閉じる">
+        <i class="fa-solid fa-xmark"></i>
+      </button>
+    </div>
+    <div class="export-body">
+      <div class="export-section">
+        <div class="export-section-ttl"><i class="fa-solid fa-file-image"></i> 用紙・レイアウト</div>
+        <div class="export-row">
+          <label class="export-lbl">向き</label>
+          <div class="export-orient-row">
+            <button class="export-orient-btn active" id="exp-landscape" onclick="setExportOrient('landscape')">
+              <i class="fa-solid fa-rectangle-wide"></i> 横（A4 Landscape）
+            </button>
+            <button class="export-orient-btn" id="exp-portrait" onclick="setExportOrient('portrait')">
+              <i class="fa-solid fa-rectangle-portrait"></i> 縦（A4 Portrait）
+            </button>
+          </div>
+        </div>
+        <div class="export-row">
+          <label class="export-lbl">分割</label>
+          <div class="export-split-row">
+            <button class="export-split-btn active" id="exp-1page" onclick="setExportSplit(1)">1枚</button>
+            <button class="export-split-btn" id="exp-2page" onclick="setExportSplit(2)">縦2分割</button>
+            <button class="export-split-btn" id="exp-3page" onclick="setExportSplit(3)">縦3分割</button>
+            <button class="export-split-btn" id="exp-4page" onclick="setExportSplit(4)">2×2分割</button>
+          </div>
+        </div>
+        <div class="export-row">
+          <label class="export-lbl">解像度</label>
+          <select id="exp-dpi" class="m-inp m-sel export-sel">
+            <option value="150">標準 (150dpi)</option>
+            <option value="200" selected>高品質 (200dpi)</option>
+            <option value="300">印刷用 (300dpi)</option>
+          </select>
+        </div>
+        <div class="export-row">
+          <label class="export-lbl">余白</label>
+          <select id="exp-margin" class="m-inp m-sel export-sel">
+            <option value="10">小 (10mm)</option>
+            <option value="15" selected>標準 (15mm)</option>
+            <option value="20">大 (20mm)</option>
+          </select>
+        </div>
+      </div>
+      <div class="export-preview-area" id="export-preview-area">
+        <div class="export-preview-inner" id="export-preview-inner">
+          <span class="export-preview-hint">プレビューを確認中...</span>
+        </div>
+      </div>
+    </div>
+    <div class="export-foot">
+      <div class="export-foot-info" id="export-info">A4 横 1枚 · 200dpi</div>
+      <div class="export-foot-r">
+        <button class="btn bg-w" onclick="closeExportDialog()">
+          <i class="fa-solid fa-xmark"></i> キャンセル
+        </button>
+        <button class="btn bp" id="export-run-btn" onclick="runExport()">
+          <i class="fa-solid fa-download"></i> ダウンロード
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ ウェルカムモーダル ═══════ -->
+<div id="welcome-modal" class="wc-overlay" role="dialog" aria-modal="true" aria-label="ウェルカム">
+  <div class="wc-card">
+    <!-- 左パネル: ブランド & 解説 -->
+    <div class="wc-left">
+      <div class="wc-brand">
+        <i class="fa-solid fa-diagram-predecessor wc-brand-ico"></i>
+        <div>
+          <div class="wc-brand-name">NPS 工程図エディタ</div>
+          <div class="wc-brand-sub">日本産業規格 JIS Z 8206 準拠</div>
+        </div>
+      </div>
+      <p class="wc-catch">
+        製造現場の工程を<br>視覚的に分析・設計する<br>エディタです
+      </p>
+      <div class="wc-features">
+        <div class="wc-feat">
+          <span class="wc-feat-ico"><i class="fa-solid fa-circle"></i></span>
+          <div>
+            <b>5種の工程記号</b>
+            <span>JIS Z 8206準拠：加工・検査・運搬・停滞・起点</span>
+          </div>
+        </div>
+        <div class="wc-feat">
+          <span class="wc-feat-ico"><i class="fa-solid fa-table-columns"></i></span>
+          <div>
+            <b>4ビュー統合</b>
+            <span>チャート / リスト / 工程経路図 / 能力表</span>
+          </div>
+        </div>
+        <div class="wc-feat">
+          <span class="wc-feat-ico"><i class="fa-solid fa-arrow-trend-up"></i></span>
+          <div>
+            <b>改善前 / 改善後 比較</b>
+            <span>サイクルタイム・加工能力を並べて評価</span>
+          </div>
+        </div>
+        <div class="wc-feat">
+          <span class="wc-feat-ico"><i class="fa-solid fa-floppy-disk"></i></span>
+          <div>
+            <b>ブラウザに自動保存</b>
+            <span>複数の工程図をワークスペースで一括管理</span>
+          </div>
+        </div>
+      </div>
+      <div class="wc-note">
+        <i class="fa-solid fa-shield-halved"></i>
+        データはブラウザ内にのみ保存されます
+      </div>
+    </div>
+    <!-- 右パネル: アクション選択 -->
+    <div class="wc-right">
+      <div class="wc-right-inner">
+        <h2 class="wc-ttl">はじめましょう</h2>
+        <p class="wc-desc">下から開始方法を選択してください</p>
+
+        <!-- CTA1: サンプルを読み込む -->
+        <button class="wc-action wc-action-primary" onclick="loadSampleData()">
+          <div class="wc-action-ico">
+            <i class="fa-solid fa-wand-magic-sparkles"></i>
+          </div>
+          <div class="wc-action-body">
+            <div class="wc-action-ttl">サンプルを読み込む</div>
+            <div class="wc-action-desc">
+              2工程図・グループ・改善データを一括で読み込みます。<br>
+              能力表での改善前/後比較をすぐに確認できます。
+            </div>
+          </div>
+          <i class="fa-solid fa-chevron-right wc-action-arr"></i>
+        </button>
+
+        <!-- CTA2: 白紙から始める -->
+        <button class="wc-action wc-action-secondary" onclick="closeWelcome()">
+          <div class="wc-action-ico wc-action-ico-sec">
+            <i class="fa-solid fa-file-circle-plus"></i>
+          </div>
+          <div class="wc-action-body">
+            <div class="wc-action-ttl">白紙から始める</div>
+            <div class="wc-action-desc">
+              空のキャンバスからオリジナルの<br>
+              工程図を作成します。
+            </div>
+          </div>
+          <i class="fa-solid fa-chevron-right wc-action-arr"></i>
+        </button>
+
+        <!-- 操作ガイドへのリンク -->
+        <div class="wc-guide-link">
+          <button class="wc-guide-btn" onclick="openGuideFromWelcome()">
+            <i class="fa-solid fa-keyboard"></i>
+            操作ガイドを表示する
+          </button>
+        </div>
+
+        <!-- 操作クイックリファレンス -->
+        <div class="wc-quick">
+          <div class="wc-quick-row"><span class="kbd">クリック</span> 記号を配置</div>
+          <div class="wc-quick-row"><span class="kbd">右●ドラッグ</span> 接続線を引く</div>
+          <div class="wc-quick-row"><span class="kbd">ダブルクリック</span> 詳細編集</div>
+          <div class="wc-quick-row"><span class="kbd">ホイール</span> ズーム</div>
+          <div class="wc-quick-row"><span class="kbd">Space</span>+ドラッグ パン</div>
+          <div class="wc-quick-row"><span class="kbd">Ctrl+S</span> JSON保存</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<!-- ═══════ 機械マスタ モーダル ═══════ -->
+<div id="machine-master-modal" class="modal">
+  <div class="modal-bg" onclick="closeMachineMasterModal()"></div>
+  <div class="master-panel">
+    <div class="master-panel-hdr">
+      <div class="m-hdr-left">
+        <i class="fa-solid fa-gears m-hdr-ico"></i>
+        <h3>機械マスタ管理</h3>
+      </div>
+      <button class="tbtn icon-only m-close-btn" onclick="closeMachineMasterModal()" title="閉じる">
+        <i class="fa-solid fa-xmark"></i>
+      </button>
+    </div>
+    <div class="master-panel-body">
+      <p class="master-desc">機械ごとのサイクルタイムを設定します。工程編集モーダルの「改善データ」タブで機械を選択すると時間が自動入力されます。</p>
+      <div class="master-table-wrap">
+        <table class="master-tbl">
+          <thead>
+            <tr>
+              <th>機械名</th>
+              <th>手作業時間<br><span class="th-unit">秒</span></th>
+              <th>自動時間<br><span class="th-unit">秒</span></th>
+              <th>段取時間<br><span class="th-unit">秒</span></th>
+              <th>段取頻度<br><span class="th-unit">個</span></th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="mm-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="master-panel-foot">
+      <button class="btn bg-w" onclick="addMachine()">
+        <i class="fa-solid fa-plus"></i> 機械を追加
+      </button>
+      <button class="btn bp" onclick="closeMachineMasterModal()">
+        <i class="fa-solid fa-check"></i> 完了
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ グループマスタ モーダル ═══════ -->
+<div id="group-master-modal" class="modal">
+  <div class="modal-bg" onclick="closeGroupMasterModal()"></div>
+  <div class="master-panel">
+    <div class="master-panel-hdr">
+      <div class="m-hdr-left">
+        <i class="fa-solid fa-layer-group m-hdr-ico"></i>
+        <h3>グループ設定（機械割り当て）</h3>
+      </div>
+      <button class="tbtn icon-only m-close-btn" onclick="closeGroupMasterModal()" title="閉じる">
+        <i class="fa-solid fa-xmark"></i>
+      </button>
+    </div>
+    <div class="master-panel-body">
+      <p class="master-desc">グループごとに担当機械を設定します。機械のサイクルタイムは能力表の計算基準として使用されます。</p>
+      <div class="master-table-wrap">
+        <table class="master-tbl">
+          <thead>
+            <tr>
+              <th>グループ名</th>
+              <th>担当機械</th>
+              <th>工程数</th>
+            </tr>
+          </thead>
+          <tbody id="gm-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="master-panel-foot">
+      <button class="btn bp" onclick="closeGroupMasterModal()">
+        <i class="fa-solid fa-check"></i> 完了
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ スクリプト（依存順に読み込み）═══════ -->
+<script src="js/core.js"></script>
+<script src="js/graph.js"></script>
+<script src="js/render.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>

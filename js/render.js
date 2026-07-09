@@ -1,0 +1,640 @@
+'use strict';
+
+// ═══════════════════════════════════════════════
+// RENDER — ビューポート / 描画エンジン / プロパティパネル
+// ═══════════════════════════════════════════════
+
+// ── レイアウト定数 ─────────────────────────────
+const LABEL_BOX_TOP = -54;
+const LABEL_BOX_H   = 18;
+const UNIT_BADGE_H  = 13;
+
+// ── ビューポート ─────────────────────────────────
+
+function applyVP() {
+  document.getElementById('vp').setAttribute('transform',
+    `translate(${S.vp.tx},${S.vp.ty}) scale(${S.vp.scale})`);
+}
+
+function c2w(cx, cy) {
+  const r = document.getElementById('cvs').getBoundingClientRect();
+  return {
+    x: (cx - r.left - S.vp.tx) / S.vp.scale,
+    y: (cy - r.top  - S.vp.ty) / S.vp.scale,
+  };
+}
+
+function zoomAt(cx, cy, f) {
+  const ns = Math.max(0.1, Math.min(6, S.vp.scale * f));
+  const r  = document.getElementById('cvs').getBoundingClientRect();
+  const px = cx - r.left, py = cy - r.top;
+  S.vp.tx  = px - (px - S.vp.tx) * (ns / S.vp.scale);
+  S.vp.ty  = py - (py - S.vp.ty) * (ns / S.vp.scale);
+  S.vp.scale = ns;
+  applyVP();
+  document.getElementById('zdsp').textContent = Math.round(ns * 100) + '%';
+}
+
+function doZoom(f) {
+  const r = document.getElementById('cwrap').getBoundingClientRect();
+  zoomAt(r.left + r.width / 2, r.top + r.height / 2, f);
+}
+
+/**
+ * 全ノードの視覚的バウンディングボックスを返す。
+ * シンボル本体・ラベルボックス・各バッジ（状態/unit/comment）の
+ * 実際の描画領域を考慮して minX/minY/maxX/maxY を計算する。
+ */
+function getNodesBounds() {
+  const PILL_H = 14, GAP = 2;
+  const COMMENT_LINE_H = 10, COMMENT_PAD_V = 4;
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+
+  for (const node of S.nodes) {
+    const r      = SYMS[node.type].r;
+    const badges = node.badges || [];
+
+    // ── X 範囲: シンボル幅 vs ラベルボックス幅の広い方 ──
+    const symL  = node.type === 'unpan' ? node.x        : node.x - r;
+    const symR  = node.type === 'unpan' ? node.x + 2 * r : node.x + r;
+    const cx    = node.type === 'unpan' ? node.x + r    : node.x;
+    const label = node.label || '';
+    const lbw   = Math.max(44, label.length * 7 + 24);
+    minX = Math.min(minX, Math.min(symL, cx - lbw / 2));
+    maxX = Math.max(maxX, Math.max(symR, cx + lbw / 2));
+
+    // ── Y 上端: ラベルボックス天辺 + ステータスバッジ分 ──
+    const statusBids   = badges.filter(bid => STATUS_BADGE_IDS.has(bid));
+    const totalStatusH = statusBids.length * (PILL_H + GAP);
+    const topY         = node.y + LABEL_BOX_TOP - (totalStatusH > 0 ? totalStatusH + 2 : 0);
+    minY = Math.min(minY, topY);
+
+    // ── Y 下端: シンボル下端 + unit / comment バッジ分 ──
+    const labelShow  = node.labelShow !== false;
+    const hasUnit    = badges.includes('unit');
+    const hasComment = badges.includes('comment');
+    let bottomY = node.y + r + (labelShow && label ? 5 : 18) + 2;
+    if (hasUnit)    bottomY += PILL_H + GAP;
+    if (hasComment) {
+      const nLines = (node.comment || '').trim()
+        ? Math.min((node.comment.trim().split('\n').length), 6) : 1;
+      bottomY += COMMENT_PAD_V * 2 + nLines * COMMENT_LINE_H + GAP;
+    }
+    maxY = Math.max(maxY, bottomY);
+  }
+  return { minX, maxX, minY, maxY };
+}
+
+function resetView() {
+  const wr = document.getElementById('cwrap').getBoundingClientRect();
+  if (wr.width <= 0 || wr.height <= 0) { requestAnimationFrame(resetView); return; }
+  if (!S.nodes.length) {
+    S.vp.scale = 1;
+    S.vp.tx = wr.width  / 2;
+    S.vp.ty = wr.height / 2;
+    applyVP();
+    document.getElementById('zdsp').textContent = '100%';
+    return;
+  }
+  const MARGIN = 40;
+  const bounds = getNodesBounds();
+  const cw = bounds.maxX - bounds.minX;
+  const ch = bounds.maxY - bounds.minY;
+  // コンテンツが収まらない場合のみ縮小。拡大は行わない（上限 100% = scale 1.0）
+  const ns = Math.min(1,
+    (wr.width  - MARGIN * 2) / (cw || 1),
+    (wr.height - MARGIN * 2) / (ch || 1)
+  );
+  S.vp.scale = Math.max(0.1, ns);
+  S.vp.tx = -bounds.minX * S.vp.scale + MARGIN;
+  S.vp.ty = -bounds.minY * S.vp.scale + MARGIN;
+  applyVP();
+  document.getElementById('zdsp').textContent = Math.round(S.vp.scale * 100) + '%';
+}
+
+function fitView() {
+  if (!S.nodes.length) { resetView(); return; }
+  const wr = document.getElementById('cwrap').getBoundingClientRect();
+  if (wr.width <= 0 || wr.height <= 0) { requestAnimationFrame(fitView); return; }
+  const minX = Math.min(...S.nodes.map(n => n.x - SYMS[n.type].r));
+  const maxX = Math.max(...S.nodes.map(n => n.x + SYMS[n.type].r));
+  const minY = Math.min(...S.nodes.map(n => n.y - SYMS[n.type].r));
+  const maxY = Math.max(...S.nodes.map(n => n.y + SYMS[n.type].r));
+  S.vp.scale = Math.min((wr.width - 80) / (maxX - minX || 1), (wr.height - 80) / (maxY - minY || 1), 1);
+  S.vp.tx    = (wr.width  - (minX + maxX) * S.vp.scale) / 2;
+  S.vp.ty    = (wr.height - (minY + maxY) * S.vp.scale) / 2;
+  applyVP();
+  document.getElementById('zdsp').textContent = Math.round(S.vp.scale * 100) + '%';
+}
+
+// ── 合流接続線 ───────────────────────────────────
+
+function renderMerges() {
+  let h = '';
+  for (const m of (S.merges || [])) {
+    const g    = (S.groups || []).find(x => x.id === m.subGroupId);
+    const tgt  = N(m.targetNodeId);
+    const last = getGroupLastNode(m.subGroupId);
+    if (!g || !tgt || !last) continue;
+    const pt  = portXY(tgt, 't');
+    const pb  = portXY(tgt, 'b');
+    const a   = portXY(last, 'r');
+    const dt  = Math.hypot(a.x - pt.x, a.y - pt.y);
+    const db  = Math.hypot(a.x - pb.x, a.y - pb.y);
+    const bPt = dt <= db ? 't' : 'b';
+    const d   = routePath(last, 'r', tgt, bPt);
+    const sel    = S.sel?.kind === 'merge' && S.sel.id === m.id;
+    const stroke = sel ? '#f59e0b' : '#475569';
+    const sw     = sel ? 2.5 : 1.8;
+    h += `<g class="mg" data-mid="${m.id}" style="cursor:pointer">
+      <path d="${d}" fill="none" stroke="transparent" stroke-width="14"/>
+      <path d="${d}" fill="none" stroke="${stroke}" stroke-width="${sw}"/>
+    </g>`;
+  }
+  document.getElementById('ML').innerHTML = h;
+  document.querySelectorAll('.mg').forEach(el => {
+    el.addEventListener('click', ev => {
+      ev.stopPropagation();
+      S.sel = { kind:'merge', id:el.dataset.mid };
+      redraw();
+    });
+  });
+}
+
+function renderEdges() {
+  let h = '';
+  for (const e of S.edges) {
+    const fn = N(e.from), tn = N(e.to); if (!fn || !tn) continue;
+    // ゴーストドラッグ中も元位置のエッジはそのまま表示する
+    const d      = routePath(fn, e.fromPort, tn, e.toPort);
+    const sel    = S.sel?.kind === 'edge' && S.sel.id === e.id;
+    const hidden = e.hidden && !sel;
+    const stroke = sel ? '#f59e0b' : (hidden ? 'transparent' : '#475569');
+    const sw     = sel ? 2.5 : 1.8;
+    const dash   = e.hidden && sel ? '6,4' : 'none';
+    h += `<g class="eg" data-eid="${e.id}" style="cursor:pointer">
+      <path d="${d}" fill="none" stroke="transparent" stroke-width="14"/>
+      <path d="${d}" fill="none" stroke="${stroke}" stroke-width="${sw}" stroke-dasharray="${dash}"/>
+    </g>`;
+  }
+  document.getElementById('EL').innerHTML = h;
+}
+
+// ── バッジ SVG ──────────────────────────────────
+// badgeOffsets:      {badgeId:{dx,dy}} デフォルト位置からのオフセット(px)
+// badgeBorders:      {badgeId:boolean} false のとき枠線なし
+// badgeColors:       {badgeId:string}  カスタムカラー（null=デフォルト）
+// badgeColorEnabled: {badgeId:boolean} false のとき無色（グレー表示）
+// unit,unitQty:      'unit'システムバッジのコンテンツ
+// comment:           'comment'システムバッジのコンテンツ
+// isPreview:         true のときDnD用の data-bid・透明ヒットエリアを付与
+
+// 状態バッジIDセット（チャート描画・モーダルで参照）
+const STATUS_BADGE_IDS = new Set(['important','quality','kaizen','auto','outsource','pokayoke']);
+
+/**
+ * バッジSVGを描画する。
+ * ・状態バッジ（max1）→ ラベルボックス上方がデフォルト位置
+ * ・unit / comment   → 記号下方がデフォルト位置（unit上・comment下）
+ * badgeOffsets によりデフォルト位置からの相対移動が可能（プレビュー・チャート共通）
+ */
+function _badgeLabelSVG(badges, r, bottomY,
+    badgeOffsets, badgeBorders, badgeColors, badgeColorEnabled,
+    isPreview, unit, unitQty, comment) {
+  if (!badges || !badges.length) return '';
+
+  const CHAR_W = 9, PAD = 22, PILL_H = 14, GAP = 2;
+  const COMMENT_LINE_H = 10, COMMENT_PAD_V = 4, COMMENT_MAX_LINES = 6, COMMENT_MAX_CHARS = 18;
+
+  const statusBids = badges.filter(bid => STATUS_BADGE_IDS.has(bid));
+  const unitOn     = badges.includes('unit');
+  const commentOn  = badges.includes('comment');
+
+  // デフォルトY位置
+  const totalStatusH = statusBids.length * (PILL_H + GAP);
+  const statusStartY = LABEL_BOX_TOP - totalStatusH - 2;
+  const sysBaseY     = (bottomY || (r + 22)) + 2;
+  const unitY        = sysBaseY;
+  const commentY     = sysBaseY + (unitOn ? PILL_H + GAP : 0);
+
+  let svg = '';
+
+  /** コメントバッジ: 改行対応・動的高さ */
+  const renderCommentPill = (b, defaultY) => {
+    const { color, bg } = getEffBadgeColors(b, badgeColors, badgeColorEnabled);
+    const off = (badgeOffsets || {})[b.id] || { dx: 0, dy: 0 };
+    const sw  = (badgeBorders || {})[b.id] !== false ? 0.9 : 0;
+
+    let lines = ['コメント'];
+    if (comment && comment.trim()) {
+      const rawLines = comment.trim().split('\n');
+      lines = rawLines.slice(0, COMMENT_MAX_LINES).map(l => {
+        const t = l.trim();
+        return t.length > COMMENT_MAX_CHARS ? t.slice(0, COMMENT_MAX_CHARS - 1) + '…' : (t || '　');
+      });
+    }
+    const nLines = lines.length;
+    const pillH  = COMMENT_PAD_V * 2 + COMMENT_LINE_H * nLines;
+    const maxLen = Math.max(...lines.map(l => l.length), 4);
+    const pw  = Math.ceil(maxLen * CHAR_W) + PAD;
+    const bx  = -pw / 2;
+    const by  = defaultY;
+    const rx  = 5; // pill の角丸（multiline は四角に近い形状）
+    const ty0 = by + COMMENT_PAD_V + COMMENT_LINE_H * 0.82; // 1行目のテキスト基準Y
+
+    const tspans = lines.map((l, i) =>
+      `<tspan x="0" ${i > 0 ? `dy="${COMMENT_LINE_H}"` : ''}>${esc(l)}</tspan>`
+    ).join('');
+
+    if (isPreview) {
+      return `<g class="preview-badge" data-bid="${b.id}" transform="translate(${off.dx},${off.dy})" style="cursor:grab">
+        <rect x="${bx-6}" y="${by-4}" width="${pw+12}" height="${pillH+8}"
+              rx="${rx+3}" fill="transparent" stroke="none" pointer-events="all"/>
+        <rect class="preview-badge-pill" x="${bx}" y="${by}" width="${pw}" height="${pillH}"
+              rx="${rx}" fill="${bg}" stroke="${color}" stroke-width="${sw}"/>
+        <text x="0" y="${ty0}" text-anchor="middle"
+          font-family="'Noto Sans JP',sans-serif" font-size="8" font-weight="700"
+          fill="${color}" pointer-events="none">${tspans}</text>
+      </g>`;
+    } else {
+      return `<g transform="translate(${off.dx},${off.dy})">
+        <rect x="${bx}" y="${by}" width="${pw}" height="${pillH}"
+              rx="${rx}" fill="${bg}" stroke="${color}" stroke-width="${sw}"/>
+        <text x="0" y="${ty0}" text-anchor="middle"
+          font-family="'Noto Sans JP',sans-serif" font-size="8" font-weight="700"
+          fill="${color}" pointer-events="none">${tspans}</text>
+      </g>`;
+    }
+  };
+
+  /** 通常バッジ（単行）*/
+  const renderPill = (b, defaultY) => {
+    let label = b.label;
+    if (b.id === 'unit') {
+      if (unit) label = unitQty ? `[${unitQty}${unit}]` : `[${unit}]`;
+    }
+    const { color, bg } = getEffBadgeColors(b, badgeColors, badgeColorEnabled);
+    const pw  = Math.ceil(label.length * CHAR_W) + PAD;
+    const bx  = -pw / 2;
+    const by  = defaultY;
+    const off = (badgeOffsets || {})[b.id] || { dx: 0, dy: 0 };
+    const sw  = (badgeBorders || {})[b.id] !== false ? 0.9 : 0;
+
+    if (isPreview) {
+      return `<g class="preview-badge" data-bid="${b.id}" transform="translate(${off.dx},${off.dy})" style="cursor:grab">
+        <rect x="${bx-6}" y="${by-6}" width="${pw+12}" height="${PILL_H+12}"
+              rx="${(PILL_H+12)/2}" fill="transparent" stroke="none" pointer-events="all"/>
+        <rect class="preview-badge-pill" x="${bx}" y="${by}" width="${pw}" height="${PILL_H}"
+              rx="${PILL_H/2}" fill="${bg}" stroke="${color}" stroke-width="${sw}"/>
+        <text x="0" y="${by + PILL_H*0.73}" text-anchor="middle"
+          font-family="'Noto Sans JP',sans-serif" font-size="8" font-weight="700"
+          fill="${color}" pointer-events="none">${esc(label)}</text>
+      </g>`;
+    } else {
+      return `<g transform="translate(${off.dx},${off.dy})">
+        <rect x="${bx}" y="${by}" width="${pw}" height="${PILL_H}"
+              rx="${PILL_H/2}" fill="${bg}" stroke="${color}" stroke-width="${sw}"/>
+        <text x="0" y="${by + PILL_H*0.73}" text-anchor="middle"
+          font-family="'Noto Sans JP',sans-serif" font-size="8" font-weight="700"
+          fill="${color}" pointer-events="none">${esc(label)}</text>
+      </g>`;
+    }
+  };
+
+  statusBids.forEach((bid, i) => {
+    const b = BADGES.find(x => x.id === bid); if (!b) return;
+    svg += renderPill(b, statusStartY + i * (PILL_H + GAP));
+  });
+  if (unitOn)    { const b = BADGES.find(x => x.id === 'unit');    if (b) svg += renderPill(b, unitY); }
+  if (commentOn) { const b = BADGES.find(x => x.id === 'comment'); if (b) svg += renderCommentPill(b, commentY); }
+
+  return svg;
+}
+
+// ── ノード装飾 SVG ──────────────────────────────
+// badgePos パラメータは廃止（バッジ種別でデフォルト位置を自動決定）
+
+function _nodeDecoSVG(type, label, unit, unitQty, badges, comment, r, tx,
+    badgeOffsets, badgeBorders, labelBorder, labelShow, isPreview,
+    badgeColors, badgeColorEnabled) {
+  let svg = '';
+  const sd = SYMS[type];
+  const badgeArr = badges || [];
+
+  // ① 工程名ラベルボックス（labelShow=false のとき非表示）
+  if (label && labelShow !== false) {
+    const bw  = Math.max(44, label.length * 7 + 24);
+    const bx  = tx - bw / 2;
+    const lsw = (labelBorder !== false) ? 1.2 : 0;
+    // ラベルカラー: badgeColors['label'] でカスタム / badgeColorEnabled['label']=false で背景透明
+    const lbEnabled = (badgeColorEnabled || {})['label'] !== false;
+    const lbCustom  = (badgeColors      || {})['label'];
+    const lbColor   = lbCustom || sd.color;
+    const lbFill    = lbEnabled ? 'white' : 'transparent';
+    svg += `<rect x="${bx}" y="${LABEL_BOX_TOP}" width="${bw}" height="${LABEL_BOX_H}" rx="4"
+              fill="${lbFill}" stroke="${lbColor}" stroke-width="${lsw}" filter="url(#bsh)"/>
+            <text x="${tx}" y="${LABEL_BOX_TOP + 13}" text-anchor="middle"
+              font-family="'Noto Sans JP',sans-serif" font-size="10" font-weight="600"
+              fill="${lbColor}">${esc(label)}</text>`;
+  } else {
+    const dispLabel = sd.shortName ?? sd.name;
+    svg += `<text x="${tx}" y="${r + 14}" text-anchor="middle"
+              font-family="'Noto Sans JP',sans-serif" font-size="10"
+              fill="${sd.color}" opacity=".65" font-weight="500">${esc(dispLabel)}</text>`;
+  }
+
+  // ② バッジ（状態・unit・comment）— 種別ごとにデフォルト位置を自動計算
+  const bottomY = r + (label ? 5 : 18);
+  if (badgeArr.length > 0) {
+    const bSvg = _badgeLabelSVG(
+      badgeArr, r, bottomY,
+      badgeOffsets, badgeBorders, badgeColors, badgeColorEnabled,
+      isPreview, unit, unitQty, comment
+    );
+    if (bSvg) svg += `<g transform="translate(${tx},0)">${bSvg}</g>`;
+  }
+
+  return svg;
+}
+
+function renderNodes() {
+  const nums = showNums ? computeNums() : {};
+  let h = '';
+  for (const node of S.nodes) {
+    const sd  = SYMS[node.type], r = sd.r;
+    const sel = S.sel?.kind === 'node' && S.sel.id === node.id;
+    const num = isNumType(node.type) ? nums[node.id] ?? null : null;
+    const tx  = node.type === 'unpan' ? r : 0;
+    // ゴーストドラッグ中は元ノードを半透明化
+    const isGhostSrc = (typeof IA !== 'undefined' && IA?.kind === 'move' && IA.moved && IA.id === node.id);
+
+    h += `<g class="ng${isGhostSrc ? ' node-dragging-src' : ''}" data-nid="${node.id}" transform="translate(${node.x},${node.y})" style="cursor:move">`;
+
+    const inMulti = S.sel?.kind === 'multi' && S.sel.ids.includes(node.id);
+    const selCx   = node.type === 'unpan' ? r : 0;
+    if (sel)     h += `<circle cx="${selCx}" r="${r+9}" fill="rgba(37,99,235,.07)" stroke="var(--acc)" stroke-width="1.5" stroke-dasharray="4,3"/>`;
+    if (inMulti) h += `<circle cx="${selCx}" r="${r+9}" fill="rgba(37,99,235,.05)" stroke="var(--acc)" stroke-width="1.5" stroke-dasharray="4,3"/>`;
+
+    h += drawSym(node.type, 0, 0, showNums ? num : null);
+
+    h += _nodeDecoSVG(
+      node.type, node.label || '', node.unit || '', node.unitQty || '',
+      node.badges || [],
+      node.comment || '', r, tx,
+      node.badgeOffsets      || {},
+      node.badgeBorders      || {},
+      node.labelBorder,
+      node.labelShow,          // false のとき工程名非表示
+      false,                   // isPreview = false
+      node.badgeColors       || {},
+      node.badgeColorEnabled || {}
+    );
+
+    // バッジ指示ドット: 削除（バッジピルラベルで識別するため不要）
+
+    if (graphErrors[node.id]) {
+      const msgs  = graphErrors[node.id].join('&#10;');
+      const errOx = node.type === 'unpan' ? 2 * r : r;
+      h += `<g class="err-badge" transform="translate(${errOx},${-r})">
+              <circle cx="0" cy="0" r="9" fill="#ef4444" stroke="#fff" stroke-width="1.5"/>
+              <text x="0" y="3.5" text-anchor="middle" font-size="11" font-weight="bold"
+                fill="#fff" font-family="sans-serif">!</text>
+              <title>${msgs}</title>
+            </g>`;
+    }
+
+    const phOutX = node.type === 'unpan' ? r * 2 : r;
+    h += `<circle class="ph ph-out" cx="${phOutX}" cy="0" r="7"
+        fill="var(--acc)" stroke="white" stroke-width="2"
+        data-nid="${node.id}" data-pt="r"
+        style="cursor:crosshair;opacity:0;transition:opacity .1s"/>`;
+
+    if (!isBase(node.type)) {
+      const inPorts = node.type === 'unpan'
+        ? [['l', 0, 0], ['t', r, -r], ['b', r, r]]
+        : [['l', -r, 0], ['t', 0, -r], ['b', 0, r]];
+      for (const [pt, dx, dy] of inPorts) {
+        h += `<circle class="ph ph-in" cx="${dx}" cy="${dy}" r="5"
+            fill="#16a34a" stroke="white" stroke-width="1.5"
+            data-nid="${node.id}" data-pt="${pt}"
+            style="opacity:0;transition:opacity .1s;cursor:default"/>`;
+      }
+    }
+
+    h += '</g>';
+  }
+  document.getElementById('NL').innerHTML = h;
+  bindNodeEv();
+}
+
+function bindNodeEv() {
+  document.querySelectorAll('.ng').forEach(g => {
+    g.addEventListener('mousedown', onNodeMD);
+    g.addEventListener('mouseenter', () => g.querySelectorAll('.ph').forEach(p => p.style.opacity = '1'));
+    g.addEventListener('mouseleave', () => g.querySelectorAll('.ph').forEach(p => p.style.opacity = '0'));
+  });
+  document.querySelectorAll('.eg').forEach(g => g.addEventListener('click', onEdgeClick));
+}
+
+function redraw() {
+  syncListOrder();
+  renderEdges();
+  renderMerges();
+  renderNodes();
+  updateProps();
+  if (currentView === 'list') updateListPanel();
+  _scheduleLS();
+}
+
+// ── プレビュー SVG（モーダル用）─────────────────
+
+function buildNodePreviewSVG({ type, label, unit, unitQty, badges, comment,
+    badgeOffsets, badgeBorders, badgeColors, badgeColorEnabled, labelBorder, labelShow }) {
+  const sd = SYMS[type] || SYMS['kako'];
+  const r  = sd.r;
+  const tx = type === 'unpan' ? r : 0;
+
+  // ── 動的 viewBox 計算 ──────────────────────────
+  const PILL_H = 14, GAP = 2;
+  const badgeArr    = badges || [];
+  const statusBids  = badgeArr.filter(bid => STATUS_BADGE_IDS.has(bid));
+  const hasComment  = badgeArr.includes('comment');
+  const hasUnit     = badgeArr.includes('unit');
+
+  // 上方向追加: ステータスバッジが多い場合
+  const totalStatusH = statusBids.length * (PILL_H + GAP);
+  const statusStartY = LABEL_BOX_TOP - totalStatusH - 2; // LABEL_BOX_TOP = -54
+  const extraTop = Math.max(0, (-100 - statusStartY)); // -100 = デフォルトvbY
+
+  // 下方向追加: コメント複数行
+  let commentH = PILL_H;
+  if (hasComment && comment && comment.trim()) {
+    const nLines = Math.min(comment.trim().split('\n').length, 6);
+    commentH = 4 * 2 + nLines * 10; // COMMENT_PAD_V*2 + COMMENT_LINE_H*n
+  }
+  const showLabel   = label && labelShow !== false;
+  const bottomY     = r + (showLabel ? 5 : 18);
+  const sysBottom   = bottomY + 2 + (hasUnit ? PILL_H + GAP : 0) + (hasComment ? commentH + GAP : 0);
+  const extraBottom = Math.max(0, sysBottom - 88); // 88 = デフォルト下端 (-100+200-12)
+
+  const vbW = 240;
+  const vbH = 210 + extraTop + extraBottom;
+  const vbX = -vbW / 2;
+  const vbY = -100 - extraTop;
+
+  let inner = `<g>`;
+  inner += drawSym(type, 0, 0, null);
+  inner += _nodeDecoSVG(type, label, unit, unitQty, badges, comment, r, tx,
+    badgeOffsets      || {},
+    badgeBorders      || {},
+    labelBorder,
+    labelShow,           // false のとき工程名非表示
+    true,                // isPreview = true
+    badgeColors       || {},
+    badgeColorEnabled || {}
+  );
+  inner += `</g>`;
+
+  return `<svg width="${vbW}" height="${vbH}" viewBox="${vbX} ${vbY} ${vbW} ${vbH}"
+    xmlns="http://www.w3.org/2000/svg" style="display:block;max-width:100%;max-height:100%;">
+    <defs>
+      <filter id="bsh" x="-30%" y="-30%" width="160%" height="160%">
+        <feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-opacity="0.1"/>
+      </filter>
+      <filter id="badge-drag-glow" x="-80%" y="-80%" width="260%" height="260%">
+        <feDropShadow dx="0" dy="0" stdDeviation="4" flood-color="#6366f1" flood-opacity="0.55"/>
+      </filter>
+    </defs>
+    ${inner}
+  </svg>`;
+}
+
+// ── プロパティパネル ─────────────────────────────
+
+function updateMeta(k, v) { S.meta[k] = v; }
+
+function syncLabel(nid, val) {
+  const n = N(nid); if (!n) return;
+  n.label = val; redraw();
+}
+
+function updateNP(nid, f, v) {
+  const n = N(nid); if (!n) return;
+  n[f] = v;
+}
+
+function getStatsHTML() {
+  const cnt = {};
+  for (const k of Object.keys(SYMS)) cnt[k] = 0;
+  for (const n of S.nodes) cnt[n.type] = (cnt[n.type] || 0) + 1;
+
+  let va = 0, nva = 0;
+  for (const [t, c] of Object.entries(cnt)) {
+    if (SYMS[t].cat === 'va')  va  += c;
+    if (SYMS[t].cat === 'nva') nva += c;
+  }
+  const tot = va + nva, pct = tot ? Math.round(va / tot * 100) : 0;
+
+  const gs = [
+    { l:'加工', k:['kako'],                         cls:'gn' },
+    { l:'検査', k:['kensa_q','kensa_n','kensa_qn'], cls:'gn' },
+    { l:'運搬', k:['unpan'],                         cls:'pk' },
+    { l:'停滞', k:['tt_s','tt_k','tt_p','tt_l'],    cls:'rd' },
+  ];
+  const grid = gs.map(g => {
+    const n = g.k.reduce((a, k) => a + (cnt[k] || 0), 0);
+    return `<div class="stcard ${g.cls}"><div class="stn">${n}</div><div class="stl">${g.l}</div></div>`;
+  }).join('');
+
+  return `
+    <div class="stgrid">${grid}</div>
+    <div class="vabar-hd"><span>付加価値率</span><b style="color:#16a34a">${pct}%</b></div>
+    <div class="vabar-bg"><div class="vabar-fg" style="width:${pct}%"></div></div>
+    <div class="vabar-ft"><span>付加価値: ${va}</span><span>非付加価値: ${nva}</span></div>
+  `;
+}
+
+function updateProps() {
+  const pc = document.getElementById('prc');
+
+  let selHtml = '';
+  if (S.sel) {
+    if (S.sel.kind === 'node') {
+      const node = N(S.sel.id);
+      if (node) {
+        const sd = SYMS[node.type];
+        const badgesHTML = (node.badges && node.badges.length)
+          ? `<div class="rp-badges">
+              ${node.badges.map(bid => {
+                const b = BADGES.find(x => x.id === bid);
+                return b ? `<span class="rp-badge" style="background:${b.bg};color:${b.color};border-color:${b.color}40">${b.label}</span>` : '';
+              }).join('')}
+            </div>` : '';
+        const metaRows = [
+          node.unit    && `<div class="rp-meta-row"><i class="fa-solid fa-box rp-meta-ico"></i><span>${esc(node.unit)}${node.unitQty ? ' × '+node.unitQty : ''}</span></div>`,
+          node.comment && `<div class="rp-meta-row rp-meta-comment"><i class="fa-regular fa-comment-dots rp-meta-ico"></i><span>${esc(node.comment)}</span></div>`,
+        ].filter(Boolean).join('');
+        selHtml = `
+          <div class="p-sec rp-sel-sec" style="border-left:3px solid ${sd.color};">
+            <div class="p-sec-ttl">
+              <i class="fa-solid fa-circle-dot" style="color:${sd.color}"></i> 選択中の工程
+            </div>
+            <div class="rp-sel-head">
+              <div class="pbdg" style="background:${sd.color}14;color:${sd.color};border-color:${sd.color}40;">
+                ${palIcoSVG(node.type, 20)} ${sd.name}
+              </div>
+            </div>
+            <p class="rp-sel-label">${esc(node.label || '（工程名未設定）')}</p>
+            ${badgesHTML}
+            ${metaRows ? `<div class="rp-meta">${metaRows}</div>` : ''}
+            <div style="display:flex;gap:7px;margin-top:10px;">
+              <button class="btn bp" style="flex:1;font-size:11px;padding:6px;"
+                onclick="openModal('${node.id}')">
+                <i class="fa-solid fa-pen-to-square"></i> 編集
+              </button>
+              <button class="btn bg-w" style="flex:1;font-size:11px;padding:6px;color:#dc2626;border-color:#fecaca;"
+                onclick="deleteSel()">
+                <i class="fa-solid fa-trash-can"></i> 削除
+              </button>
+            </div>
+          </div>`;
+      }
+    } else {
+      const edge = E(S.sel.id);
+      if (edge) {
+        selHtml = `
+          <div class="p-sec rp-sel-sec" style="border-left:3px solid #f59e0b;">
+            <div class="p-sec-ttl">
+              <i class="fa-solid fa-arrow-right-arrow-left" style="color:#d97706"></i> 選択中の接続線
+            </div>
+            <button class="btn bg-w"
+              style="width:100%;font-size:11px;color:#dc2626;border-color:#fecaca;"
+              onclick="deleteSel()">
+              <i class="fa-solid fa-trash-can"></i> 接続を削除
+            </button>
+          </div>`;
+      }
+    }
+  }
+
+  const kpiHtml = `
+    <div class="p-sec">
+      <div class="p-sec-ttl"><i class="fa-solid fa-chart-bar"></i> 工程集計 (KPI)</div>
+      ${getStatsHTML()}
+    </div>`;
+
+  const metaHtml = `
+    <div class="p-sec">
+      <div class="p-sec-ttl"><i class="fa-solid fa-file-lines"></i> 図面基礎情報</div>
+      <div class="plbl">品番</div>
+      <input class="pinp" value="${esc(S.meta.hb)}" placeholder="例: AL-1234" oninput="updateMeta('hb',this.value)">
+      <div class="plbl">品名</div>
+      <input class="pinp" value="${esc(S.meta.hm)}" placeholder="例: アルミコイル" oninput="updateMeta('hm',this.value)">
+      <div class="plbl">作成者</div>
+      <input class="pinp" value="${esc(S.meta.sk)}" placeholder="氏名" oninput="updateMeta('sk',this.value)">
+      <div class="plbl">作成日</div>
+      <input class="pinp" type="date" value="${esc(S.meta.dt)}" oninput="updateMeta('dt',this.value)">
+    </div>`;
+
+  pc.innerHTML = selHtml + kpiHtml + metaHtml;
+}

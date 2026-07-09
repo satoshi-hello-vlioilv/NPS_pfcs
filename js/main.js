@@ -1,0 +1,1145 @@
+'use strict';
+
+// ═══════════════════════════════════════════════
+// MAIN — マウス・キーボードインタラクション / I/O / 初期化
+// ═══════════════════════════════════════════════
+
+// ── インタラクション ─────────────────────────────
+
+let IA        = null;
+let spaceHeld = false;
+
+// ダブルクリック検出（redraw で要素が再生成されるため自前実装）
+let _dblNid  = null;
+let _dblTime = 0;
+const DBL_MS = 300;
+
+// ── チャートインサート（エッジ/ノード上ドロップ挿入）─────
+
+/** 点(px,py)からセグメント(ax,ay)-(bx,by)への最短距離 */
+function _distToSeg(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  if (len2 === 0) return Math.hypot(px - ax, py - ay);
+  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2));
+  return Math.hypot(px - ax - t * dx, py - ay - t * dy);
+}
+
+/**
+ * ドラッグ中のノードに対してインサート候補を返す。
+ * すでに同一経路で接続済みのエッジ・ノードは候補から除外する。
+ * @returns {null | {kind:'edge', edge, fn, tn} | {kind:'node', target}}
+ */
+function _findInsertTarget(node) {
+  const r = SYMS[node.type].r;
+
+  // 1. エッジへの近接（ノード自身が既に from/to になっているエッジは除外）
+  const EDGE_HIT = r + 14;
+  for (const e of S.edges) {
+    if (e.from === node.id || e.to === node.id) continue;
+    if (e.hidden) continue;
+    const fn = N(e.from), tn = N(e.to);
+    if (!fn || !tn) continue;
+    if (isBase(fn.type)) continue;
+    // 挿入後の接続 fn→node, node→tn が既に両方存在する場合はスキップ
+    const wouldDup = _edgeExists(fn.id, 'r', node.id, 'l') &&
+                     _edgeExists(node.id, 'r', tn.id, 'l');
+    if (wouldDup) continue;
+    const a = portXY(fn, e.fromPort), b = portXY(tn, e.toPort);
+    const d = _distToSeg(node.x, node.y, a.x, a.y, b.x, b.y);
+    if (d < EDGE_HIT) return { kind: 'edge', edge: e, fn, tn };
+  }
+
+  // 2. ノードへの重なり（自分以外・起点以外）
+  const NODE_HIT = r + 10;
+  for (const n of S.nodes) {
+    if (n.id === node.id || isBase(n.type)) continue;
+    const rn = SYMS[n.type].r;
+    const cx = n.type === 'unpan' ? n.x + rn : n.x;
+    const d  = Math.hypot(node.x - cx, node.y - n.y);
+    if (d < r + rn + NODE_HIT) {
+      // tgt→node の接続が既に存在する場合はスキップ
+      if (_edgeExists(n.id, 'r', node.id, 'l')) continue;
+      return { kind: 'node', target: n };
+    }
+  }
+
+  return null;
+}
+
+/** インサートヒントのSVGをTLレイヤーに描画 */
+function _renderInsertHint(target, draggingNode) {
+  if (!target) { document.getElementById('TL').innerHTML = ''; return; }
+
+  let svg = '';
+  if (target.kind === 'edge') {
+    const a = portXY(target.fn, target.edge.fromPort);
+    const b = portXY(target.tn, target.edge.toPort);
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    // エッジをハイライト
+    svg += `<path class="insert-hint-anim" d="M${a.x} ${a.y}L${b.x} ${b.y}"
+      fill="none" stroke="var(--acc)" stroke-width="3.5" stroke-dasharray="6,3"/>`;
+    // 挿入位置マーカー（＋アイコン）
+    svg += `<g class="insert-hint-anim">
+      <circle cx="${mx}" cy="${my}" r="11"
+        fill="var(--acc-bg)" stroke="var(--acc)" stroke-width="2.5"/>
+      <path d="M${mx-5},${my} L${mx+5},${my} M${mx},${my-5} L${mx},${my+5}"
+        stroke="var(--acc)" stroke-width="2.5" stroke-linecap="round"/>
+    </g>`;
+    // ラベル
+    svg += `<text x="${mx}" y="${my + 24}" text-anchor="middle"
+      font-family="'Noto Sans JP',sans-serif" font-size="10" font-weight="700"
+      fill="var(--acc)" opacity="0.9">ここに挿入</text>`;
+
+  } else if (target.kind === 'node') {
+    const n = target.target;
+    const rn = SYMS[n.type].r;
+    const cx = n.type === 'unpan' ? n.x + rn : n.x;
+    const rx = portXY(n, 'r').x;
+    // ノードをリングでハイライト
+    svg += `<circle class="insert-hint-anim" cx="${cx}" cy="${n.y}" r="${rn + 13}"
+      fill="none" stroke="var(--acc)" stroke-width="2.5" stroke-dasharray="5,3"/>`;
+    // 右側に挿入矢印バッジ
+    svg += `<g class="insert-hint-anim">
+      <rect x="${rx + 6}" y="${n.y - 11}" width="52" height="22" rx="11"
+        fill="var(--acc)" opacity="0.92"/>
+      <text x="${rx + 32}" y="${n.y + 4}" text-anchor="middle"
+        font-family="'Noto Sans JP',sans-serif" font-size="10" font-weight="700"
+        fill="white">→挿入</text>
+    </g>`;
+  }
+
+  document.getElementById('TL').innerHTML = svg;
+}
+
+/**
+ * ゴーストドラッグ中に TL レイヤーへ描画する。
+ * ・元ノードは半透明化（renderNodes 側でクラス付与）
+ * ・ゴーストノード（半透明シンボル）を (gx, gy) に描画
+ * ・挿入ヒントを重ねて描画
+ */
+function _renderGhostAndHint(node, gx, gy, target) {
+  const r  = SYMS[node.type].r;
+  const cx = node.type === 'unpan' ? gx + r : gx;
+
+  // ゴーストノード（ドロップ候補位置に半透明で表示）
+  let svg = `<g opacity="0.48" pointer-events="none">
+    <circle cx="${cx}" cy="${gy}" r="${r + 7}" fill="var(--acc-bg)"
+      stroke="var(--acc)" stroke-width="2" stroke-dasharray="5,3"/>
+    ${drawSym(node.type, gx, gy, null)}
+  </g>`;
+
+  // 挿入ヒント（_renderInsertHint と同一ロジック）
+  if (target) {
+    if (target.kind === 'edge') {
+      const a = portXY(target.fn, target.edge.fromPort);
+      const b = portXY(target.tn, target.edge.toPort);
+      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+      svg += `<path class="insert-hint-anim" d="M${a.x} ${a.y}L${b.x} ${b.y}"
+        fill="none" stroke="var(--acc)" stroke-width="3.5" stroke-dasharray="6,3"/>
+        <g class="insert-hint-anim">
+          <circle cx="${mx}" cy="${my}" r="11"
+            fill="var(--acc-bg)" stroke="var(--acc)" stroke-width="2.5"/>
+          <path d="M${mx-5},${my} L${mx+5},${my} M${mx},${my-5} L${mx},${my+5}"
+            stroke="var(--acc)" stroke-width="2.5" stroke-linecap="round"/>
+        </g>
+        <text x="${mx}" y="${my + 24}" text-anchor="middle"
+          font-family="'Noto Sans JP',sans-serif" font-size="10" font-weight="700"
+          fill="var(--acc)" opacity="0.9">ここに挿入</text>`;
+    } else if (target.kind === 'node') {
+      const n  = target.target;
+      const rn = SYMS[n.type].r;
+      const tcx = n.type === 'unpan' ? n.x + rn : n.x;
+      const rx  = portXY(n, 'r').x;
+      svg += `<circle class="insert-hint-anim" cx="${tcx}" cy="${n.y}" r="${rn + 13}"
+        fill="none" stroke="var(--acc)" stroke-width="2.5" stroke-dasharray="5,3"/>
+        <g class="insert-hint-anim">
+          <rect x="${rx + 6}" y="${n.y - 11}" width="52" height="22" rx="11"
+            fill="var(--acc)" opacity="0.92"/>
+          <text x="${rx + 32}" y="${n.y + 4}" text-anchor="middle"
+            font-family="'Noto Sans JP',sans-serif" font-size="10" font-weight="700"
+            fill="white">→挿入</text>
+        </g>`;
+    }
+  }
+
+  document.getElementById('TL').innerHTML = svg;
+}
+
+/** 下流ノード（startId から右エッジで到達可能なもの）のIDセットを返す */
+function _downstreamIds(startId) {
+  const visited = new Set();
+  const queue = [startId];
+  while (queue.length) {
+    const id = queue.shift();
+    if (visited.has(id)) continue;
+    visited.add(id);
+    for (const e of S.edges) {
+      if (e.from === id && e.fromPort === 'r') queue.push(e.to);
+    }
+  }
+  visited.delete(startId);
+  return visited;
+}
+
+// ── 循環検出・チェーン抽出・リスト同期 ────────────────
+
+/**
+ * fromId → toId の接続を追加したとき循環が生じるか検査する。
+ * toId から既存エッジを DFS で辿り fromId へ到達できれば循環と判定。
+ * @param {string} fromId
+ * @param {string} toId
+ * @returns {boolean}
+ */
+function _wouldCreateCycle(fromId, toId) {
+  if (fromId === toId) return true;
+  const visited = new Set();
+  const stack   = [toId];
+  while (stack.length) {
+    const cur = stack.pop();
+    if (cur === fromId) return true;
+    if (visited.has(cur)) continue;
+    visited.add(cur);
+    for (const e of S.edges) {
+      if (e.from === cur) stack.push(e.to);
+    }
+  }
+  return false;
+}
+
+/**
+ * ノードを現在の接続チェーンから切り離し、前後ノードをブリッジ接続する。
+ * ドラッグ挿入前に呼び出すことで、旧接続の残留（ダイヤモンド構造・循環）を防ぐ。
+ *
+ * 処理内容:
+ *   1. node に繋がる全エッジを削除
+ *   2. 前ノード（inEdge.from）と後ノード（outEdge.to）が存在すれば直結ブリッジを追加
+ *
+ * @param {object} node - 切り離すノードオブジェクト
+ */
+function _extractNodeFromChain(node) {
+  // メインフロー方向の入出力エッジを特定（fromPort:'r' を主フローとする）
+  const inEdge  = S.edges.find(e => e.to   === node.id && e.fromPort === 'r');
+  const outEdge = S.edges.find(e => e.from === node.id && e.fromPort === 'r');
+
+  // ノードに繋がる全エッジを除去
+  S.edges = S.edges.filter(e => e.from !== node.id && e.to !== node.id);
+
+  // 前後ノードが存在する場合はブリッジ接続を追加してチェーンを維持
+  if (inEdge && outEdge) {
+    const pred = N(inEdge.from);
+    const succ = N(outEdge.to);
+    if (pred && succ) {
+      const hidden = isBase(pred.type) || isBase(succ.type);
+      _addEdgeSafe(pred.id, 'r', succ.id, 'l', hidden ? { hidden: true } : {});
+    }
+  }
+}
+
+/**
+ * エッジのトポロジカル順序に基づいて listOrder を再ソートする。
+ * チャートモードでエッジが追加・変更されたときにリストビューへ反映するために使用。
+ * グループ情報（node.groupId）はそのまま保持し、表示順序のみを更新する。
+ */
+function _syncListOrderFromGraph() {
+  const topo    = getTopoOrder();
+  const topoPos = new Map(topo.map((id, i) => [id, i]));
+  S.listOrder.sort((a, b) => {
+    const pa = topoPos.has(a) ? topoPos.get(a) : Infinity;
+    const pb = topoPos.has(b) ? topoPos.get(b) : Infinity;
+    return pa - pb;
+  });
+}
+
+// ── 多重接続チェック ──────────────────────────────
+
+/**
+ * 完全同一経路（from・fromPort・to・toPort）のエッジが既に存在するか確認。
+ * hidden エッジも含めて検査する。
+ */
+function _edgeExists(fromId, fromPort, toId, toPort) {
+  return S.edges.some(e =>
+    e.from === fromId && e.fromPort === fromPort &&
+    e.to   === toId   && e.toPort   === toPort
+  );
+}
+
+/**
+ * 重複がなければエッジを追加して返す。重複があれば null を返す。
+ */
+function _addEdgeSafe(fromId, fromPort, toId, toPort, extra = {}) {
+  if (_edgeExists(fromId, fromPort, toId, toPort)) return null;
+  const e = { id: uid(), from: fromId, fromPort, to: toId, toPort, ...extra };
+  S.edges.push(e);
+  return e;
+}
+
+/**
+ * S.edges の重複エッジを除去する（from+fromPort+to+toPort の完全一致）。
+ * 同一経路が複数ある場合は最初の1件を残す。
+ */
+function _deduplicateEdges() {
+  const seen = new Set();
+  S.edges = S.edges.filter(e => {
+    const key = `${e.from}:${e.fromPort}>${e.to}:${e.toPort}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+// ── 右チェーン整列（alignLayout と同一ギャップ式・起点から連鎖）──
+
+/**
+ * alignLayout と同じギャップ規則を startId から右エッジを辿って連鎖適用する。
+ * Y座標は親と揃える（同一行前提）。
+ * グラフが分岐・合流していても正しく辿れるよう BFS で処理する。
+ *
+ * ギャップ規則（alignLayout と完全同一）:
+ *   gap      = par.type === 'unpan' ? 2*C : 1*C
+ *   ch.x     = snapV( portXY(par,'r').x + gap + chLeftOff )
+ *   chLeftOff = ch.type === 'unpan' ? 0 : SYMS[ch.type].r
+ */
+function _alignRightChainFrom(startId) {
+  // 右エッジの「子→親エッジ」マップを構築
+  const rightEdgesOf = {}; // parentId → [edge]
+  for (const e of S.edges) {
+    if (e.fromPort !== 'r') continue;
+    if (!rightEdgesOf[e.from]) rightEdgesOf[e.from] = [];
+    rightEdgesOf[e.from].push(e);
+  }
+
+  // startId から BFS で連鎖整列
+  const visited = new Set();
+  const queue   = [startId];
+  while (queue.length) {
+    const pid = queue.shift();
+    if (visited.has(pid)) continue;
+    visited.add(pid);
+    const par = N(pid); if (!par) continue;
+    for (const e of (rightEdgesOf[pid] || [])) {
+      const ch = N(e.to); if (!ch || visited.has(ch.id)) continue;
+      const gap      = par.type === 'unpan' ? 2 * C : 1 * C;
+      const parRight = portXY(par, 'r').x;
+      const chOff    = ch.type  === 'unpan' ? 0 : SYMS[ch.type].r;
+      ch.x = snapV(parRight + gap + chOff);
+      ch.y = snapV(par.y);          // 同一行維持
+      queue.push(ch.id);
+    }
+  }
+}
+
+// ── インサート実行 ────────────────────────────────
+
+/**
+ * チャートへのドロップ挿入を実行する。
+ *
+ * 処理順:
+ *   0. ノードを現在の接続チェーンから切り離す（旧接続の残留を防ぐ）
+ *   1. ターゲットエッジ/ノードを特定して接続を組み替え（多重接続は _addEdgeSafe で排除）
+ *   2. listOrder を更新
+ *   3. ノードをひとまず親の右に仮配置
+ *   4. _alignRightChainFrom で親ノードから連鎖整列（alignLayout 同一規則）
+ *
+ * @returns {boolean} インサートを実行したか
+ */
+function _doChartInsert(node, target) {
+  if (!target) return false;
+
+  // ── Step 0: ノードを旧チェーンから切り離してブリッジ接続を生成 ──
+  // これにより旧エッジが残留してダイヤモンド構造や循環が生まれるのを防ぐ
+  _extractNodeFromChain(node);
+
+  if (target.kind === 'edge') {
+    const { edge, fn, tn } = target;
+
+    // 既存エッジを削除
+    S.edges = S.edges.filter(e => e.id !== edge.id);
+
+    // 新エッジを追加（重複チェック付き）
+    const hidden1 = isBase(fn.type) || isBase(node.type);
+    const hidden2 = isBase(node.type) || isBase(tn.type);
+    _addEdgeSafe(fn.id,   'r', node.id, 'l', hidden1 ? { hidden: true } : {});
+    _addEdgeSafe(node.id, 'r', tn.id,   'l', hidden2 ? { hidden: true } : {});
+
+    // groupId を挿入先（fn）のグループに合わせる
+    node.groupId = fn.groupId ?? null;
+
+    // listOrder: draggingノードを tn の直前に移動
+    const fromIdx = S.listOrder.indexOf(node.id);
+    if (fromIdx >= 0) S.listOrder.splice(fromIdx, 1);
+    const toIdx = S.listOrder.indexOf(tn.id);
+    S.listOrder.splice(toIdx >= 0 ? toIdx : S.listOrder.length, 0, node.id);
+
+    // 仮配置（fn 直右）→ 連鎖整列で正確な位置に確定
+    node.y = snapV(fn.y);
+    node.x = snapV(portXY(fn, 'r').x + C);
+    _alignRightChainFrom(fn.id);
+
+  } else if (target.kind === 'node') {
+    const tgt = target.target;
+
+    // tgt の右エッジを探す（_extractNodeFromChain 後に再検索する）
+    const rightEdge = S.edges.find(e => e.from === tgt.id && e.fromPort === 'r');
+    const succNode  = rightEdge ? N(rightEdge.to) : null;
+
+    // groupId を挿入先（tgt）のグループに合わせる
+    node.groupId = tgt.groupId ?? null;
+
+    if (rightEdge && succNode) {
+      // 既存エッジを組み替え
+      S.edges = S.edges.filter(e => e.id !== rightEdge.id);
+      const hidden1 = isBase(tgt.type)  || isBase(node.type);
+      const hidden2 = isBase(node.type) || isBase(succNode.type);
+      _addEdgeSafe(tgt.id,  'r', node.id,     'l', hidden1 ? { hidden: true } : {});
+      _addEdgeSafe(node.id, 'r', succNode.id,  'l', hidden2 ? { hidden: true } : {});
+
+      // listOrder: node を succNode の直前に移動
+      const fromIdx = S.listOrder.indexOf(node.id);
+      if (fromIdx >= 0) S.listOrder.splice(fromIdx, 1);
+      const succIdx = S.listOrder.indexOf(succNode.id);
+      S.listOrder.splice(succIdx >= 0 ? succIdx : S.listOrder.length, 0, node.id);
+
+    } else {
+      // 末尾ノード: tgt の右に接続するだけ
+      const hidden = isBase(tgt.type) || isBase(node.type);
+      _addEdgeSafe(tgt.id, 'r', node.id, 'l', hidden ? { hidden: true } : {});
+
+      // listOrder: tgt の直後に移動
+      const fromIdx = S.listOrder.indexOf(node.id);
+      if (fromIdx >= 0) S.listOrder.splice(fromIdx, 1);
+      const tgtIdx = S.listOrder.indexOf(tgt.id);
+      S.listOrder.splice(tgtIdx >= 0 ? tgtIdx + 1 : S.listOrder.length, 0, node.id);
+    }
+
+    // 仮配置（tgt 直右）→ 連鎖整列で正確な位置に確定
+    node.y = snapV(tgt.y);
+    node.x = snapV(portXY(tgt, 'r').x + C);
+    _alignRightChainFrom(tgt.id);
+  }
+
+  // 挿入後の最終クリーンアップ:
+  // ① 重複エッジを除去（ドラッグ操作の繰り返しによる蓄積を防ぐ）
+  _deduplicateEdges();
+  // ② グラフのトポロジカル順でリスト順序を同期（チャート↔リスト一致）
+  _syncListOrderFromGraph();
+
+  return true;
+}
+
+// ── 複数選択 ────────────────────────────────────
+// S.sel = { kind:'multi', ids:string[] } で複数選択状態を表す
+
+function _multiIds() {
+  return S.sel?.kind === 'multi' ? S.sel.ids : [];
+}
+function _isInMultiSel(nid) {
+  return S.sel?.kind === 'multi' && S.sel.ids.includes(nid);
+}
+
+/** 入力ポートの近傍検索 */
+function nearPort(wx, wy, excId) {
+  const HIT = 16;
+  let best = null, bestD = HIT;
+  for (const n of S.nodes) {
+    if (n.id === excId || isBase(n.type)) continue;
+    for (const pt of ['l','t','b']) {
+      const p = portXY(n, pt);
+      const d = Math.hypot(p.x - wx, p.y - wy);
+      if (d < bestD) { bestD = d; best = { nid:n.id, port:pt, px:p.x, py:p.y }; }
+    }
+  }
+  return best;
+}
+
+function onNodeMD(ev) {
+  if (placeType) return;
+
+  const portEl = ev.target.closest('.ph-out');
+  if (portEl) {
+    ev.stopPropagation(); ev.preventDefault();
+    const nid  = portEl.dataset.nid;
+    const node = N(nid); if (!node) return;
+    const pp   = portXY(node, 'r');
+    IA = { kind:'edge', fromId:nid, fromPort:'r', sx:pp.x, sy:pp.y };
+    return;
+  }
+  if (ev.target.closest('.ph-in')) return;
+  ev.stopPropagation();
+
+  const nid  = ev.currentTarget.dataset.nid;
+  const node = N(nid); if (!node) return;
+
+  // ダブルクリック判定
+  const now = Date.now();
+  if (nid === _dblNid && now - _dblTime < DBL_MS) {
+    _dblNid = null; _dblTime = 0;
+    openModal(nid); return;
+  }
+  _dblNid = nid; _dblTime = now;
+
+  const w = c2w(ev.clientX, ev.clientY);
+
+  // Shift+クリック: 複数選択トグル
+  if (ev.shiftKey) {
+    let ids = _multiIds().slice();
+    if (S.sel?.kind === 'node') ids = [S.sel.id]; // 単一選択→複数に昇格
+    if (ids.includes(nid)) ids = ids.filter(id => id !== nid);
+    else ids.push(nid);
+    S.sel = ids.length === 1 ? { kind:'node', id:ids[0] } : { kind:'multi', ids };
+    redraw(); return;
+  }
+
+  // 複数選択中のノードをドラッグ → 全体移動
+  if (_isInMultiSel(nid)) {
+    const snap0 = ss();
+    const origins = {};
+    for (const id of _multiIds()) {
+      const n = N(id); if (n) origins[id] = { ox:n.x, oy:n.y };
+    }
+    IA = { kind:'multi-move', ids:_multiIds(), origins, mx:w.x, my:w.y, snap0, moved:false };
+    return;
+  }
+
+  // 通常の単一選択・移動
+  S.sel = { kind:'node', id:nid };
+  IA = { kind:'move', id:nid, ox:node.x, oy:node.y, mx:w.x, my:w.y, snap0:ss(), moved:false };
+  redraw();
+}
+
+function onEdgeClick(ev) {
+  if (placeType) return;
+  ev.stopPropagation();
+  S.sel = { kind:'edge', id:ev.currentTarget.dataset.eid };
+  redraw();
+}
+
+function initEvents() {
+  const cvs = document.getElementById('cvs');
+
+  cvs.addEventListener('mousemove', ev => {
+    if (placeType) { const w = c2w(ev.clientX, ev.clientY); showGhost(w.x, w.y); return; }
+    if (!IA) return;
+    const w = c2w(ev.clientX, ev.clientY);
+
+    if (IA.kind === 'pan') {
+      S.vp.tx = IA.stx + (ev.clientX - IA.sx);
+      S.vp.ty = IA.sty + (ev.clientY - IA.sy);
+      applyVP(); return;
+    }
+
+    if (IA.kind === 'move') {
+      const node = N(IA.id); if (!node) return;
+      // ゴースト位置を追跡（ノード自体は元位置を維持→接続線はそのまま表示）
+      IA.ghostX = snapV(IA.ox + (w.x - IA.mx));
+      IA.ghostY = snapV(IA.oy + (w.y - IA.my));
+      IA.moved = true;
+      // インサート候補検知: 一時的にゴースト位置へ移動して検索後に戻す
+      const origX = node.x, origY = node.y;
+      node.x = IA.ghostX; node.y = IA.ghostY;
+      IA.insertTarget = _findInsertTarget(node);
+      node.x = origX; node.y = origY;
+      // ゴーストノード + 挿入ヒントを TL レイヤーに描画
+      _renderGhostAndHint(node, IA.ghostX, IA.ghostY, IA.insertTarget);
+      renderEdges(); renderMerges(); renderNodes(); return;
+    }
+
+    // 複数ノード同時移動
+    if (IA.kind === 'multi-move') {
+      const dx = w.x - IA.mx, dy = w.y - IA.my;
+      for (const id of IA.ids) {
+        const n = N(id), o = IA.origins[id]; if (!n || !o) continue;
+        n.x = snapV(o.ox + dx);
+        n.y = snapV(o.oy + dy);
+      }
+      IA.moved = true;
+      renderEdges(); renderMerges(); renderNodes(); return;
+    }
+
+    // ラバーバンド選択
+    if (IA.kind === 'band') {
+      // ワールド座標での選択範囲
+      const x0 = Math.min(IA.wx0, w.x), y0 = Math.min(IA.wy0, w.y);
+      const x1 = Math.max(IA.wx0, w.x), y1 = Math.max(IA.wy0, w.y);
+      // スクリーン座標での表示矩形（cwrap相対）
+      const wrap  = document.getElementById('cwrap').getBoundingClientRect();
+      const bx0   = Math.min(IA.cx0, ev.clientX) - wrap.left;
+      const by0   = Math.min(IA.cy0, ev.clientY) - wrap.top;
+      const bx1   = Math.max(IA.cx0, ev.clientX) - wrap.left;
+      const by1   = Math.max(IA.cy0, ev.clientY) - wrap.top;
+      const bw    = bx1 - bx0, bh = by1 - by0;
+
+      // ヒットテスト（ワールド座標）
+      const hit = S.nodes.filter(n => {
+        const r = SYMS[n.type].r;
+        return n.x + r >= x0 && n.x - r <= x1 && n.y + r >= y0 && n.y - r <= y1;
+      }).map(n => n.id);
+      IA.hitIds = hit;
+
+      // バンド表示（最小サイズ4px以上で表示）
+      const bd = document.getElementById('band-div');
+      const bi = document.getElementById('band-info');
+      if (bw > 4 || bh > 4) {
+        bd.style.display  = 'block';
+        bd.style.left     = bx0 + 'px';
+        bd.style.top      = by0 + 'px';
+        bd.style.width    = bw  + 'px';
+        bd.style.height   = bh  + 'px';
+        // 件数バッジ: Gestalt近接性 — カーソル右下に追従
+        const infoX = Math.max(IA.cx0, ev.clientX) - wrap.left + 10;
+        const infoY = Math.max(IA.cy0, ev.clientY) - wrap.top  + 10;
+        bi.style.display = 'block';
+        bi.style.left    = infoX + 'px';
+        bi.style.top     = infoY + 'px';
+        bi.textContent   = hit.length ? hit.length + '件選択中' : '範囲を指定';
+        bi.className     = hit.length ? 'band-info has-hit' : 'band-info';
+      } else {
+        bd.style.display = 'none';
+        bi.style.display = 'none';
+      }
+
+      // 対象ノードを即時ハイライト（ノードSVGクラスを直接切替）
+      document.querySelectorAll('.ng').forEach(el => {
+        el.classList.toggle('band-hover', hit.includes(el.dataset.nid));
+      });
+      return;
+    }
+
+    if (IA.kind === 'edge') {
+      const tgt = nearPort(w.x, w.y, IA.fromId);
+      const ex = tgt ? tgt.px : w.x, ey = tgt ? tgt.py : w.y;
+      document.getElementById('TL').innerHTML =
+        `<line x1="${IA.sx}" y1="${IA.sy}" x2="${ex}" y2="${ey}"
+           stroke="var(--acc)" stroke-width="2" stroke-dasharray="5,3"/>
+         ${tgt ? `<circle cx="${tgt.px}" cy="${tgt.py}" r="9"
+           fill="var(--acc-bg)" stroke="var(--acc)" stroke-width="2"/>` : ''}`;
+    }
+  });
+
+  cvs.addEventListener('mousedown', ev => {
+    if (ev.target.closest('.ng') || ev.target.closest('.eg') || ev.target.closest('.mg')) return;
+    const w = c2w(ev.clientX, ev.clientY);
+
+    if (placeType) {
+      const sp = snapP(w.x, w.y);
+      pushUndo();
+      const prevSelId = S.sel?.kind === 'node' ? S.sel.id : null;
+      const node = mkNode(placeType, sp.x, sp.y);
+      // 選択中ノードのグループを引き継ぐ
+      if (prevSelId) node.groupId = N(prevSelId)?.groupId ?? null;
+      S.nodes.push(node);
+      // listOrder: 選択中ノードの直後に挿入（なければ末尾）
+      _insertInListOrder(node.id, prevSelId);
+      autoConnect(node, prevSelId);
+      S.sel = { kind:'node', id:node.id };
+      document.getElementById('TL').innerHTML = '';
+      redraw(); return;
+    }
+
+    if (ev.button === 1 || (ev.button === 0 && spaceHeld)) {
+      ev.preventDefault();
+      IA = { kind:'pan', sx:ev.clientX, sy:ev.clientY, stx:S.vp.tx, sty:S.vp.ty };
+      cvs.classList.add('panning'); return;
+    }
+
+    if (ev.button === 0) {
+      _dblNid = null; _dblTime = 0;
+      // ラバーバンド選択開始（空白クリック）
+      IA = { kind:'band', wx0:w.x, wy0:w.y, cx0:ev.clientX, cy0:ev.clientY, hitIds:[] };
+    }
+  });
+
+  window.addEventListener('mouseup', ev => {
+    if (!IA) return;
+    const { kind } = IA;
+
+    if (kind === 'pan') {
+      document.getElementById('cvs').classList.remove('panning');
+      document.getElementById('TL').innerHTML = '';
+
+    } else if (kind === 'move') {
+      document.getElementById('TL').innerHTML = '';
+      if (IA.moved) {
+        const node = N(IA.id);
+        if (node) {
+          // ドロップ確定：ゴースト位置をノードの実座標に適用
+          node.x = IA.ghostX ?? node.x;
+          node.y = IA.ghostY ?? node.y;
+        }
+        const inserted = node ? _doChartInsert(node, IA.insertTarget) : false;
+        graphErrors = {};
+        S._undo.push(IA.snap0);
+        if (S._undo.length > 100) S._undo.shift();
+        S._redo = []; rUB();
+        if (inserted) {
+          // 挿入後に整列と整合チェックを自動実行
+          syncChartFromListOrder();
+          validateGraph();
+          const n = Object.keys(graphErrors).length;
+          setStatus(n > 0
+            ? `工程を挿入しました — ルール違反が ${n} 件あります`
+            : '工程を挿入しました — 整列・ルールチェック OK');
+        }
+        redraw();
+      }
+
+    } else if (kind === 'multi-move') {
+      if (IA.moved) {
+        graphErrors = {};
+        S._undo.push(IA.snap0);
+        if (S._undo.length > 100) S._undo.shift();
+        S._redo = []; rUB();
+        renderMerges();
+      }
+
+    } else if (kind === 'band') {
+      document.getElementById('band-div').style.display = 'none';
+      document.getElementById('band-info').style.display = 'none';
+      document.querySelectorAll('.ng.band-hover').forEach(el => el.classList.remove('band-hover'));
+      const hit = IA.hitIds || [];
+      if (hit.length > 1) {
+        S.sel = { kind:'multi', ids: hit };
+        redraw();
+      } else if (hit.length === 1) {
+        S.sel = { kind:'node', id: hit[0] };
+        redraw();
+      } else {
+        S.sel = null; redraw();
+      }
+
+    } else if (kind === 'edge') {
+      const w   = c2w(ev.clientX, ev.clientY);
+      const tgt = nearPort(w.x, w.y, IA.fromId);
+      document.getElementById('TL').innerHTML = '';
+      if (tgt && tgt.nid !== IA.fromId) {
+        // ── 循環接続チェック ──────────────────────────
+        if (_wouldCreateCycle(IA.fromId, tgt.nid)) {
+          setStatus('⚠ 循環接続（ループ）は作成できません — 工程順は DAG（有向非巡回グラフ）でなければなりません');
+        } else {
+          const fn = N(IA.fromId), tn = N(tgt.nid);
+          // ── 異なるグループ間の接続チェック ─────────────
+          if (fn?.groupId && tn?.groupId && fn.groupId !== tn.groupId) {
+            if (tgt.port === 't' || tgt.port === 'b') {
+              // 合流接続（右端OUT → 上/下IN）: merge エントリを作成
+              const existing = getMergeBySubGroup(fn.groupId);
+              if (existing) {
+                if (!confirm('このグループにはすでに合流接続があります。上書きしますか？')) { IA = null; return; }
+                S.merges = (S.merges || []).filter(m => m.id !== existing.id);
+              }
+              pushUndo();
+              S.merges = S.merges || [];
+              S.merges.push({ id: uid(), subGroupId: fn.groupId, targetNodeId: tgt.nid });
+              syncChartFromListOrder();
+              _syncListOrderFromGraph();
+              redraw(); fitView();
+              setStatus('グループ合流を設定しました');
+            } else {
+              setStatus('⚠ 別グループへの直接接続はできません — 合流させる場合は合流先記号の上/下ポートに接続してください');
+            }
+          } else {
+            // 重複エッジチェック（同一経路のエッジが既にある場合はスキップ）
+            if (_edgeExists(IA.fromId, IA.fromPort, tgt.nid, tgt.port)) {
+              setStatus('⚠ この接続は既に存在します');
+            } else {
+              pushUndo();
+              const edge = { id:uid(), from:IA.fromId, fromPort:IA.fromPort, to:tgt.nid, toPort:tgt.port };
+              if (fn && tn && (isBase(fn.type) || isBase(tn.type))) edge.hidden = true;
+              S.edges.push(edge);
+              // ── listOrder をグラフのトポロジカル順に同期 ──
+              _syncListOrderFromGraph();
+              redraw();
+            }
+          }
+        }
+      }
+    }
+    IA = null;
+  });
+
+  cvs.addEventListener('wheel', ev => {
+    ev.preventDefault();
+    zoomAt(ev.clientX, ev.clientY, ev.deltaY < 0 ? 1.12 : 1 / 1.12);
+  }, { passive: false });
+
+  document.addEventListener('keydown', ev => {
+    if (document.getElementById('edit-modal').classList.contains('show')) return;
+    if (document.getElementById('guide-modal').classList.contains('show')) {
+      if (ev.key === 'Escape') closeGuideModal();
+      return;
+    }
+    const tag = document.activeElement.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+    if (ev.key === ' ' || ev.code === 'Space') {
+      ev.preventDefault(); spaceHeld = true;
+      if (!placeType) document.getElementById('cvs').style.cursor = 'grab';
+    }
+    if (ev.key === 'Escape')                              cancelPlace();
+    if (ev.key === 'Delete' || ev.key === 'Backspace')    { ev.preventDefault(); deleteSel(); }
+    if (ev.ctrlKey && ev.key === 'z')                     { ev.preventDefault(); undo(); }
+    if (ev.ctrlKey && (ev.key === 'y' || ev.key === 'Y')) { ev.preventDefault(); redo(); }
+    if (ev.ctrlKey && ev.key === 's')                     { ev.preventDefault(); saveJ(); }
+  });
+
+  document.addEventListener('keyup', ev => {
+    if (ev.key === ' ' || ev.code === 'Space') {
+      spaceHeld = false;
+      if (!placeType) document.getElementById('cvs').style.cursor = '';
+    }
+  });
+
+  cvs.addEventListener('contextmenu', ev => { ev.preventDefault(); cancelPlace(); });
+}
+
+/** ノードオブジェクト生成ファクトリ */
+function mkNode(type, x, y) {
+  return { id:uid(), type, x, y, label:'', note:'', comment:'', unit:'', unitQty:'',
+           badges:[], badgePos:'top', badgeOffsets:{}, badgeBorders:{},
+           badgeColors:{}, badgeColorEnabled:{},
+           groupId:null, listParentIds:[] };
+}
+
+// ── I/O ─────────────────────────────────────────
+
+const gMeta = ()  => S.meta;
+const sMeta = m   => { if (m) S.meta = { ...S.meta, ...m }; };
+
+function saveJ() {
+  syncActiveChart();
+  const payload = {
+    charts: W.charts, activeId: W.activeId, uid: _uid,
+    machineMaster, capSettings, improvementMode,
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type:'application/json' });
+  const a    = document.createElement('a');
+  a.href     = URL.createObjectURL(blob);
+  a.download = `NPS工程図_${getActiveChartName() || 'workspace'}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  saveLS();
+}
+
+function trigLoad() { document.getElementById('fload').click(); }
+
+function loadJ(ev) {
+  const f = ev.target.files[0]; if (!f) return;
+  const r = new FileReader();
+  r.onload = e => {
+    try {
+      const d = JSON.parse(e.target.result);
+      if (Array.isArray(d.charts) && d.charts.length) {
+        // V3 ワークスペース形式
+        W.charts   = d.charts;
+        W.activeId = d.activeId || d.charts[0].id;
+        if (d.uid) _uid = Math.max(_uid, d.uid);
+        const active = W.charts.find(c => c.id === W.activeId) || W.charts[0];
+        W.activeId = active.id;
+        if (d.improvementMode) improvementMode = d.improvementMode; // バリアントロード前にモード確定
+        loadChartIntoS(active);
+      } else {
+        // V2 単一工程図形式 → アクティブ工程図を置き換え
+        const ac = W.charts.find(c => c.id === W.activeId);
+        if (ac) {
+          // ノードフィールドを loadChartIntoS / mkNode と完全一致させる
+          ac.nodes     = (d.nodes || []).map(n => ({
+            listParentIds:[], badgeOffsets:{}, badgeBorders:{}, badgeColors:{}, badgeColorEnabled:{}, ...n
+          }));
+          ac.edges            = d.edges      || [];
+          ac.groups           = d.groups     || [];
+          ac.merges           = d.merges     || [];
+          ac.listOrder        = d.listOrder  || [];
+          ac.meta             = d.meta       || ac.meta;
+          ac.backboneGroupId  = d.backboneGroupId || null;
+          if (d.uid) _uid = Math.max(_uid, d.uid);
+          loadChartIntoS(ac);
+        }
+      }
+      S._undo = []; S._redo = [];
+      graphErrors = {};
+      rUB(); redraw(); resetView();
+      saveLS();
+      // グローバル設定を復元
+      if (Array.isArray(d.machineMaster) && d.machineMaster.length) machineMaster = d.machineMaster;
+      if (d.capSettings) {
+        capSettings.operatingTime  = d.capSettings.operatingTime  ?? capSettings.operatingTime;
+        capSettings.targetQty      = d.capSettings.targetQty      ?? capSettings.targetQty;
+        capSettings.groupOverrides = d.capSettings.groupOverrides ?? {};
+      }
+      if (d.improvementMode) setImprovementMode(d.improvementMode);
+      _saveGlobalSettings();
+      _updateActiveChartDisplay();
+      setStatus('読み込み完了');
+    } catch (err) { alert('読み込みエラー: ' + err.message); }
+  };
+  r.readAsText(f);
+  ev.target.value = '';
+}
+
+// ── 初期化 ───────────────────────────────────────
+
+function init() {
+  if (!S.meta.dt) S.meta.dt = new Date().toISOString().split('T')[0];
+  buildPalette();
+  buildChartPalBar();
+  initEvents();
+  document.getElementById('btn-nums').classList.toggle('on', showNums);
+
+  const wr = document.getElementById('cwrap').getBoundingClientRect();
+  S.vp.tx  = wr.width  / 2;
+  S.vp.ty  = wr.height / 2;
+  applyVP();
+  rUB();
+
+  const hasData = _loadLS();
+  _loadGlobalSettings();
+
+  // 保存済みモードに合わせてバリアントを再ロード＆ imp-mode ボタン同期
+  if (W.activeId) {
+    const _ac = W.charts.find(c => c.id === W.activeId);
+    if (_ac?.impVariants) loadChartIntoS(_ac);
+  }
+  document.querySelectorAll('.imp-mode-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.mode === improvementMode));
+
+  _updateActiveChartDisplay();
+  if (hasData) {
+    redraw();
+    resetView();
+    setStatus('前回のデータを復元しました — 保存: Ctrl+S');
+  } else {
+    redraw();
+    showWelcome();
+  }
+}
+
+init();
+
+// ── 画像保存（A4 PNG エクスポート）─────────────────
+
+// A4サイズ定義 (mm)
+const A4 = { w: 297, h: 210 }; // Landscape デフォルト
+
+let _exportOrient = 'landscape'; // 'landscape' | 'portrait'
+let _exportSplit  = 1;           // 1 | 2 | 3 | 4
+
+function openExportDialog() {
+  document.getElementById('export-modal').classList.add('show');
+  _updateExportInfo();
+  _renderExportPreview();
+}
+function closeExportDialog() {
+  document.getElementById('export-modal').classList.remove('show');
+}
+function setExportOrient(o) {
+  _exportOrient = o;
+  document.getElementById('exp-landscape').classList.toggle('active', o === 'landscape');
+  document.getElementById('exp-portrait').classList.toggle('active', o === 'portrait');
+  _updateExportInfo();
+  _renderExportPreview();
+}
+function setExportSplit(n) {
+  _exportSplit = n;
+  [1,2,3,4].forEach(i => {
+    document.getElementById(`exp-${i}page`).classList.toggle('active', i === n);
+  });
+  _updateExportInfo();
+  _renderExportPreview();
+}
+
+function _updateExportInfo() {
+  const orient = _exportOrient === 'landscape' ? '横' : '縦';
+  const dpi = document.getElementById('exp-dpi')?.value || 200;
+  const split = _exportSplit === 1 ? '1枚' : _exportSplit === 4 ? '2×2分割' : `縦${_exportSplit}分割`;
+  document.getElementById('export-info').textContent = `A4 ${orient} ${split} · ${dpi}dpi`;
+}
+
+/** SVGのノード群のバウンディングボックスを取得 */
+function _getNodesBBox() {
+  if (!S.nodes.length) return { x:-200, y:-200, w:400, h:400 };
+  const PAD = 80; // 余白(px, SVG座標系)
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const n of S.nodes) {
+    const r = SYMS[n.type].r;
+    const tx = n.type === 'unpan' ? r : 0;
+    // ラベル上の余白も考慮
+    minX = Math.min(minX, n.x - r * 2);
+    minY = Math.min(minY, n.y - r - 70); // ラベルボックス上方
+    maxX = Math.max(maxX, n.x + r * 2);
+    maxY = Math.max(maxY, n.y + r + 60); // バッジ下方
+  }
+  return {
+    x: minX - PAD, y: minY - PAD,
+    w: (maxX - minX) + PAD * 2,
+    h: (maxY - minY) + PAD * 2,
+  };
+}
+
+/** A4 1ページのピクセルサイズを計算 (dpi基準) */
+function _a4px(dpi) {
+  const mmToInch = 1 / 25.4;
+  const pw = (_exportOrient === 'landscape' ? A4.w : A4.h) * mmToInch * dpi;
+  const ph = (_exportOrient === 'landscape' ? A4.h : A4.w) * mmToInch * dpi;
+  return { pw: Math.round(pw), ph: Math.round(ph) };
+}
+
+/**
+ * SVGをシリアライズし、指定ビューポートでCanvasに描画してPNG Blobを返す。
+ * ビューポートの transform (translate/scale) をリセットして viewBox をワールド座標で制御する。
+ */
+async function _renderPageToBlob(vbX, vbY, vbW, vbH, canvasW, canvasH, marginMM, dpi) {
+  const mmPx = dpi / 25.4;
+  const mPx  = marginMM * mmPx;
+  // 描画領域（余白内側）
+  const drawW = canvasW - mPx * 2;
+  const drawH = canvasH - mPx * 2;
+
+  // scale: SVG空間 → Canvas描画領域
+  const scale = Math.min(drawW / vbW, drawH / vbH);
+  const scaledW = vbW * scale;
+  const scaledH = vbH * scale;
+  const offX = mPx + (drawW - scaledW) / 2;
+  const offY = mPx + (drawH - scaledH) / 2;
+
+  // SVGをシリアライズ（元のSVGをクローンして viewBox を書き換え）
+  const origSvg = document.getElementById('cvs');
+  const clone = origSvg.cloneNode(true);
+  clone.setAttribute('viewBox', `${vbX} ${vbY} ${vbW} ${vbH}`);
+  clone.setAttribute('width',  String(scaledW));
+  clone.setAttribute('height', String(scaledH));
+
+  // ビューポートグループの transform をリセット（translate/scale の影響を除去）
+  // ノードはワールド座標に配置されており、viewBox もワールド座標で指定するため
+  const vpEl = clone.querySelector('#vp');
+  if (vpEl) vpEl.setAttribute('transform', 'translate(0,0) scale(1)');
+
+  // フォント埋め込みのためスタイルを注入
+  const styleEl = document.createElement('style');
+  styleEl.textContent = `
+    text { font-family: 'Noto Sans JP', 'Hiragino Kaku Gothic Pro', sans-serif; }
+    .ph { display: none; }
+    .insert-hint-anim { display: none; }
+  `;
+  clone.insertBefore(styleEl, clone.firstChild);
+
+  const svgStr = new XMLSerializer().serializeToString(clone);
+  const blob   = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
+  const url    = URL.createObjectURL(blob);
+
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width  = canvasW;
+      canvas.height = canvasH;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvasW, canvasH);
+      ctx.drawImage(img, offX, offY, scaledW, scaledH);
+      URL.revokeObjectURL(url);
+      canvas.toBlob(resolve, 'image/png');
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('SVG render failed')); };
+    img.src = url;
+  });
+}
+
+/** スプリット数に応じたページ配列を計算 */
+function _computePages(bbox) {
+  const n = _exportSplit;
+  if (n === 1) {
+    return [{ vbX: bbox.x, vbY: bbox.y, vbW: bbox.w, vbH: bbox.h, label: '1' }];
+  }
+  if (n === 2) {
+    // 縦2分割（左右）
+    const hw = bbox.w / 2;
+    return [
+      { vbX: bbox.x,       vbY: bbox.y, vbW: hw, vbH: bbox.h, label: '1of2' },
+      { vbX: bbox.x + hw,  vbY: bbox.y, vbW: hw, vbH: bbox.h, label: '2of2' },
+    ];
+  }
+  if (n === 3) {
+    const tw = bbox.w / 3;
+    return [0,1,2].map(i => ({
+      vbX: bbox.x + i * tw, vbY: bbox.y, vbW: tw, vbH: bbox.h, label: `${i+1}of3`,
+    }));
+  }
+  // 4: 2×2
+  const hw = bbox.w / 2, hh = bbox.h / 2;
+  return [
+    { vbX: bbox.x,      vbY: bbox.y,      vbW: hw, vbH: hh, label: '1of4(左上)' },
+    { vbX: bbox.x + hw, vbY: bbox.y,      vbW: hw, vbH: hh, label: '2of4(右上)' },
+    { vbX: bbox.x,      vbY: bbox.y + hh, vbW: hw, vbH: hh, label: '3of4(左下)' },
+    { vbX: bbox.x + hw, vbY: bbox.y + hh, vbW: hw, vbH: hh, label: '4of4(右下)' },
+  ];
+}
+
+/** プレビューサムネイルを生成 */
+async function _renderExportPreview() {
+  const inner = document.getElementById('export-preview-inner');
+  if (!inner) return;
+  inner.innerHTML = '<span class="export-preview-hint">生成中...</span>';
+
+  const dpi = 72; // プレビューは低解像度
+  const margin = parseInt(document.getElementById('exp-margin')?.value || 15);
+  const { pw, ph } = _a4px(dpi);
+  const bbox = _getNodesBBox();
+  const pages = _computePages(bbox);
+  const scale = Math.min(180 / pw, 140 / ph);
+  const thumbW = Math.round(pw * scale);
+  const thumbH = Math.round(ph * scale);
+
+  inner.innerHTML = '';
+  for (const pg of pages) {
+    try {
+      const blob = await _renderPageToBlob(pg.vbX, pg.vbY, pg.vbW, pg.vbH, pw, ph, margin, dpi);
+      const url = URL.createObjectURL(blob);
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'display:inline-block;text-align:center;';
+      const img = document.createElement('img');
+      img.className = 'export-page-thumb';
+      img.style.cssText = `width:${thumbW}px;height:${thumbH}px;display:block;`;
+      img.src = url;
+      img.onload = () => URL.revokeObjectURL(url);
+      const lbl = document.createElement('div');
+      lbl.className = 'export-page-label';
+      lbl.textContent = pages.length > 1 ? `ページ ${pg.label}` : 'A4 プレビュー';
+      wrap.appendChild(img);
+      wrap.appendChild(lbl);
+      inner.appendChild(wrap);
+    } catch(e) {
+      inner.innerHTML = '<span class="export-preview-hint">プレビュー生成エラー</span>';
+    }
+  }
+}
+
+/** 実際にダウンロード */
+async function runExport() {
+  const btn = document.getElementById('export-run-btn');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 処理中...'; }
+
+  const dpi    = parseInt(document.getElementById('exp-dpi')?.value || 200);
+  const margin = parseInt(document.getElementById('exp-margin')?.value || 15);
+  const { pw, ph } = _a4px(dpi);
+  const bbox   = _getNodesBBox();
+  const pages  = _computePages(bbox);
+  const name   = S.meta.hb || S.meta.hm || 'NPS工程図';
+
+  try {
+    for (const pg of pages) {
+      const blob = await _renderPageToBlob(pg.vbX, pg.vbY, pg.vbW, pg.vbH, pw, ph, margin, dpi);
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href     = url;
+      const suffix = pages.length > 1 ? `_p${pg.label}` : '';
+      a.download = `${name}${suffix}.png`;
+      a.click();
+      URL.revokeObjectURL(url);
+      if (pages.length > 1) await new Promise(r => setTimeout(r, 300));
+    }
+    setStatus(`画像保存完了 — ${pages.length}ファイルをダウンロードしました`);
+    closeExportDialog();
+  } catch(e) {
+    alert('画像保存エラー: ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-download"></i> ダウンロード'; }
+  }
+}

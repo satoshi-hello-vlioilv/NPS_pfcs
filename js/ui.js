@@ -3631,8 +3631,6 @@ function switchView(view) {
   document.getElementById('sid-routemap').style.display  = view === 'routemap' ? 'flex' : 'none';
   document.getElementById('sid-capacity').style.display  = view === 'capacity' ? 'flex' : 'none';
 
-  // 工程経路図時はサイドバーを広げて工程図一覧を表示
-  document.getElementById('sid').style.width = view === 'routemap' ? '276px' : '';
 
   // チャート・リスト時以外はプロパティパネル(右ドロワー)を非表示にし、開いている場合は閉じる
   const isDocView = view === 'chart' || view === 'list';
@@ -3831,10 +3829,11 @@ function updateChartsPanel() {
     const numCount  = cd.nodes.filter(n => isNumType(n.type)).length;
 
     return `
-<div class="rm-chart-card${isSel ? ' rm-card-selected' : ''}${isActive ? ' rm-card-active' : ''}" data-cid="${c.id}">
+<div class="rm-chart-card${isSel ? ' rm-card-selected' : ''}${isActive ? ' rm-card-active' : ''}" data-cid="${c.id}"
+  onclick="onRmCardClick(event, '${c.id}')" title="クリックして経路図に含める/除外">
   <div class="rm-card-top">
     <label class="rm-card-check-wrap" title="${isSel ? '経路図から除外' : '経路図に含める'}">
-      <input type="checkbox" ${isSel ? 'checked' : ''} onchange="toggleRoutemapChart('${c.id}', this.checked)">
+      <input type="checkbox" ${isSel ? 'checked' : ''} onchange="toggleRoutemapChart('${c.id}', this.checked); this.closest('.rm-chart-card').classList.toggle('rm-card-selected', this.checked)">
     </label>
     <span class="rm-card-name" data-cid="${c.id}"
       ondblclick="startRenameChart('${c.id}', this)"
@@ -4066,6 +4065,17 @@ function toggleRoutemapChart(cid, checked) {
   if (checked) _routemapSelected.add(cid);
   else _routemapSelected.delete(cid);
   _renderRouteTable();
+}
+
+/** カード本体のクリックをチェックボックスと同じ挙動にする（ボタン・チェックボックス自体は除外） */
+function onRmCardClick(e, cid) {
+  if (e.target.closest('.rm-card-check-wrap, .rm-card-acts, button, a, input')) return;
+  const card = e.currentTarget;
+  const next = !_routemapSelected.has(cid);
+  const cb = card.querySelector('.rm-card-check-wrap input[type="checkbox"]');
+  if (cb) cb.checked = next;
+  card.classList.toggle('rm-card-selected', next);
+  toggleRoutemapChart(cid, next);
 }
 
 function selectAllRoutemapCharts()  { W.charts.forEach(c => _routemapSelected.add(c.id));  updateRouteMap(); }

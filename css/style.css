@@ -33,7 +33,7 @@
   --mut2:     #94a3b8;
 
   /* ─ レイアウト寸法 */
-  --sid:      228px;
+  --sid:      276px;
   --rp:       272px;
   --hdr-h:    52px;
   --tab-h:    42px;
@@ -159,9 +159,23 @@ body{
    左サイドバー（パレット）
    ══════════════════════════════════════════════ */
 #sid{
-  width:var(--sid);background:var(--surf);
+  width:var(--sid);min-width:200px;max-width:440px;background:var(--surf);
   border-right:1px solid var(--bdr);
   display:flex;flex-direction:column;overflow:hidden;flex-shrink:0;z-index:10;
+}
+
+/* サイドバー幅の手動調整ハンドル */
+#sid-resizer{
+  width:5px;flex-shrink:0;cursor:col-resize;position:relative;z-index:15;
+  background:transparent;
+}
+#sid-resizer::after{
+  content:'';position:absolute;top:0;bottom:0;left:2px;width:1px;
+  background:var(--bdr);transition:background var(--tr),width var(--tr);
+}
+#sid-resizer:hover::after,
+#sid-resizer.dragging::after{
+  left:1.5px;width:2px;background:var(--acc);
 }
 
 .pmbar{
@@ -4629,6 +4643,7 @@ body:not(.lf-dnd-active) .ng[data-multisel] { cursor: move; }
   background: var(--surf);
   margin: 0 6px 7px;
   overflow: hidden;
+  cursor: pointer;
   transition: border-color var(--tr), box-shadow var(--tr);
 }
 .rm-chart-card:hover {

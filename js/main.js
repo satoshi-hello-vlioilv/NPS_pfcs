@@ -577,6 +577,46 @@ function onEdgeClick(ev) {
   redraw();
 }
 
+/** 左サイドバーの幅をドラッグで調整可能にし、直近の幅を永続化する（タブ切替では幅を変えない） */
+function initSidResizer() {
+  const sid    = document.getElementById('sid');
+  const handle = document.getElementById('sid-resizer');
+  if (!sid || !handle) return;
+
+  const MIN_W = 200, MAX_W = 440;
+  const saved = parseInt(localStorage.getItem('nps_sid_w'), 10);
+  if (saved >= MIN_W && saved <= MAX_W) sid.style.width = saved + 'px';
+
+  let startX = 0, startW = 0, dragging = false;
+
+  handle.addEventListener('mousedown', ev => {
+    dragging = true;
+    startX = ev.clientX;
+    startW = sid.getBoundingClientRect().width;
+    sid.style.transition = 'none';
+    handle.classList.add('dragging');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    ev.preventDefault();
+  });
+
+  window.addEventListener('mousemove', ev => {
+    if (!dragging) return;
+    const w = Math.min(MAX_W, Math.max(MIN_W, startW + (ev.clientX - startX)));
+    sid.style.width = w + 'px';
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    sid.style.transition = '';
+    handle.classList.remove('dragging');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    localStorage.setItem('nps_sid_w', Math.round(sid.getBoundingClientRect().width));
+  });
+}
+
 function initEvents() {
   const cvs = document.getElementById('cvs');
 
@@ -960,6 +1000,7 @@ function init() {
   buildPalette();
   buildChartPalBar();
   initEvents();
+  initSidResizer();
   document.getElementById('btn-nums').classList.toggle('on', showNums);
 
   const wr = document.getElementById('cwrap').getBoundingClientRect();

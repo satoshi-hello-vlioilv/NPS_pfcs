@@ -6338,6 +6338,10 @@ td.rm-td-chart { display: table-cell; } /* flex fallback fix */
   border-radius: 3px;
   overflow: visible;
 }
+/* 自動送りがない（手作業のみ）行：加工能力グラフを非表示（レイアウト位置は維持） */
+.cap-bar-inner-hidden {
+  visibility: hidden;
+}
 .cap-bar-req-line2 {
   position: absolute;
   top: -4px;

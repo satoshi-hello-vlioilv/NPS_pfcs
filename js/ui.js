@@ -1582,7 +1582,7 @@ function _capRowHTML(node, seq, opTime, tgtQty, maxScale, taktSec, wtMaxScale, c
       </div>
     </div>
     <div class="${barTall ? 'cap-col-bar cap-col-bar--tall' : 'cap-col-bar'}">
-      <div class="cap-bar-inner${hasAutoTime ? '' : ' cap-bar-inner-hidden'}" style="height:${barContainerH}px">
+      <div class="cap-bar-inner" style="height:${barContainerH}px">
         ${barInnerHTML}
       </div>
     </div>

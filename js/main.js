@@ -114,6 +114,109 @@ function _findInsertTarget(node) {
   return null;
 }
 
+/**
+ * 挿入ターゲットが見つからない位置のうち「挿入できない場所」に
+ * 重なっている場合はその理由を返す（起点記号・起点直後の線・自分自身の接続線）。
+ * 空き地（本当に何もない場所）では null を返す。
+ * ドラッグ判定用に node が一時的にポインタ座標へ動かされている場合、
+ * 自分の接続線の端点は元位置 (ox, oy) で評価する（線が付いてこないように）。
+ * @returns {null | {reason:'base'|'base-edge'|'self-edge'}}
+ */
+function _findInsertBlocked(node, ox, oy) {
+  const r  = SYMS[node.type].r;
+  const cx = node.type === 'unpan' ? node.x + r : node.x;
+  const cy = node.y;
+
+  // 起点記号（内製・外製）への重なり
+  for (const n of S.nodes) {
+    if (n.id === node.id || !isBase(n.type)) continue;
+    const rn = SYMS[n.type].r;
+    if (Math.hypot(cx - n.x, cy - n.y) < r + rn + 10) return { reason: 'base' };
+  }
+
+  // 挿入対象外の線（自分自身の接続線・起点直後の線）への近接
+  const EDGE_HIT = r + 14;
+  for (const e of S.edges) {
+    if (e.hidden) continue;
+    const fn = N(e.from), tn = N(e.to);
+    if (!fn || !tn) continue;
+    const isSelf     = e.from === node.id || e.to === node.id;
+    const isBaseEdge = isBase(fn.type);
+    if (!isSelf && !isBaseEdge) continue;
+    let pts;
+    if (isSelf && ox !== undefined) {
+      const sx = node.x, sy = node.y;
+      node.x = ox; node.y = oy;
+      pts = _edgePolyPoints(fn, e.fromPort, tn, e.toPort);
+      node.x = sx; node.y = sy;
+    } else {
+      pts = _edgePolyPoints(fn, e.fromPort, tn, e.toPort);
+    }
+    if (_distToPolyline(cx, cy, pts) < EDGE_HIT) {
+      return { reason: isSelf ? 'self-edge' : 'base-edge' };
+    }
+  }
+  return null;
+}
+
+/** 挿入ターゲットが所属するグループを返す（挿入後に引き継ぐグループ） */
+function _insertTargetGroup(target) {
+  if (!target) return null;
+  const gid = target.kind === 'edge' ? target.fn.groupId : target.target.groupId;
+  return gid ? G(gid) : null;
+}
+
+/** ノードの表示名（ラベル → 記号名の順でフォールバック） */
+function _nodeName(n) {
+  return getEffectiveLabel(n) || SYMS[n.type]?.name || '';
+}
+
+/** ドラッグヒント用のピルバッジSVG（グループ名・警告などの表示に使用） */
+function _hintPill(cx, cy, label, fill) {
+  const w = Math.max(44, [...label].reduce((s, ch) => s + (ch.charCodeAt(0) > 0xff ? 10 : 6), 0) + 20);
+  return `<g class="insert-hint-anim" pointer-events="none">
+    <rect x="${cx - w / 2}" y="${cy - 10}" width="${w}" height="20" rx="10"
+      fill="${fill}" opacity="0.93"/>
+    <text x="${cx}" y="${cy + 3.5}" text-anchor="middle"
+      font-family="'Noto Sans JP',sans-serif" font-size="10" font-weight="700"
+      fill="white">${esc(label)}</text>
+  </g>`;
+}
+
+/**
+ * ドラッグ中のホバー位置に応じたステータスメッセージを返す。
+ * どのグループへ移るのか / どこから外れるのか / なぜ挿入できないのかを明示する。
+ */
+function _dragHoverMsg(node, target, blocked) {
+  const curG = node.groupId ? G(node.groupId) : null;
+  if (target) {
+    const tg  = _insertTargetGroup(target);
+    const pos = target.kind === 'edge'
+      ? `「${_nodeName(target.fn)}」→「${_nodeName(target.tn)}」の間`
+      : `「${_nodeName(target.target)}」の直後`;
+    if ((tg?.id ?? null) !== (curG?.id ?? null)) {
+      const from = curG ? `グループ「${curG.label}」から` : '';
+      const to   = tg ? `「${tg.label}」` : 'グループなし';
+      return `${pos}に挿入 — ${from}${to}へ移動します`;
+    }
+    return `${pos}に挿入します${tg ? `（グループ「${tg.label}」）` : ''}`;
+  }
+  if (blocked) {
+    const msgs = {
+      'base':      '⚠ 起点記号（内製・外製）には挿入できません — ドロップすると元の位置に戻ります',
+      'base-edge': '⚠ 起点直後の線には挿入できません — ドロップすると元の位置に戻ります',
+      'self-edge': '⚠ 自分自身の接続線には挿入できません — ドロップすると元の位置に戻ります',
+    };
+    return msgs[blocked.reason] || '⚠ ここには挿入できません — ドロップすると元の位置に戻ります';
+  }
+  const hasEdges = S.edges.some(e => e.from === node.id || e.to === node.id);
+  if (hasEdges) {
+    return `空き地: ドロップでラインから抜き取ります${curG ? ` — グループ「${curG.label}」からも外れます` : ''}`;
+  }
+  if (curG) return `空き地: ドロップでグループ「${curG.label}」から外れます`;
+  return 'ドロップでこの位置に移動します';
+}
+
 /** インサートヒントのSVG文字列を生成（エッジは実際の描画経路をハイライト） */
 function _insertHintSVG(target) {
   if (!target) return '';
@@ -137,6 +240,9 @@ function _insertHintSVG(target) {
     svg += `<text x="${mx}" y="${my + 24}" text-anchor="middle"
       font-family="'Noto Sans JP',sans-serif" font-size="10" font-weight="700"
       fill="var(--acc)" opacity="0.9">ここに挿入</text>`;
+    // 挿入先グループのバッジ（グループ色＋名称で移動先を明示）
+    const ge = _insertTargetGroup(target);
+    svg += _hintPill(mx, my - 30, ge ? ge.label : 'グループなし', ge?.color || '#94a3b8');
 
   } else if (target.kind === 'node') {
     const n = target.target;
@@ -154,6 +260,9 @@ function _insertHintSVG(target) {
         font-family="'Noto Sans JP',sans-serif" font-size="10" font-weight="700"
         fill="white">→挿入</text>
     </g>`;
+    // 挿入先グループのバッジ（グループ色＋名称で移動先を明示）
+    const gn = _insertTargetGroup(target);
+    svg += _hintPill(cx, n.y - rn - 27, gn ? gn.label : 'グループなし', gn?.color || '#94a3b8');
   }
   return svg;
 }
@@ -169,7 +278,7 @@ function _renderInsertHint(target) {
  * ・ゴーストノード（半透明シンボル）を (gx, gy) に描画
  * ・挿入ヒントを重ねて描画
  */
-function _renderGhostAndHint(node, gx, gy, target) {
+function _renderGhostAndHint(node, gx, gy, target, blocked) {
   const r  = SYMS[node.type].r;
   const cx = node.type === 'unpan' ? gx + r : gx;
 
@@ -181,6 +290,25 @@ function _renderGhostAndHint(node, gx, gy, target) {
   </g>`;
 
   svg += _insertHintSVG(target);
+
+  // ターゲットなし（既存ノードのドラッグ時のみ）: 挿入不可 / グループ離脱の予告バッジ
+  if (!target && N(node.id)) {
+    if (blocked) {
+      const lbls = {
+        'base':      '起点には挿入不可',
+        'base-edge': 'この線には挿入不可',
+        'self-edge': '自分の線には挿入不可',
+      };
+      svg += _hintPill(cx, gy + r + 22, lbls[blocked.reason] || '挿入不可', '#dc2626');
+    } else {
+      const curG     = node.groupId ? G(node.groupId) : null;
+      const hasEdges = S.edges.some(e => e.from === node.id || e.to === node.id);
+      if (hasEdges || curG) {
+        const lbl = curG ? `「${curG.label}」から外れます` : 'ラインから外れます';
+        svg += _hintPill(cx, gy + r + 22, lbl, '#d97706');
+      }
+    }
+  }
 
   document.getElementById('TL').innerHTML = svg;
 }
@@ -469,9 +597,11 @@ function placeSymbolAt(type, wx, wy, prevSelId) {
     syncChartFromListOrder();
     validateGraph();
     const n = Object.keys(graphErrors).length;
+    const g = node.groupId ? G(node.groupId) : null;
+    const gTxt = g ? `工程をグループ「${g.label}」に挿入しました` : '工程を挿入しました';
     setStatus(n > 0
-      ? `工程を挿入しました — ルール違反が ${n} 件あります`
-      : '工程を挿入しました — 整列・ルールチェック OK');
+      ? `${gTxt} — ルール違反が ${n} 件あります`
+      : `${gTxt} — 整列・ルールチェック OK`);
   } else {
     // 空き領域へのドロップ: 選択中ノードのグループ・並び順を引き継いで自動接続
     if (prevSelId) {
@@ -644,9 +774,13 @@ function initEvents() {
       const origX = node.x, origY = node.y;
       node.x = rawX; node.y = rawY;
       IA.insertTarget = _findInsertTarget(node);
+      IA.blocked      = IA.insertTarget ? null : _findInsertBlocked(node, origX, origY);
       node.x = origX; node.y = origY;
-      // ゴーストノード + 挿入ヒントを TL レイヤーに描画
-      _renderGhostAndHint(node, IA.ghostX, IA.ghostY, IA.insertTarget);
+      // ゴーストノード + 挿入ヒント + グループ移動/離脱バッジを TL レイヤーに描画
+      _renderGhostAndHint(node, IA.ghostX, IA.ghostY, IA.insertTarget, IA.blocked);
+      // ホバー位置の意味（挿入先グループ・離脱・挿入不可）をステータスに常時表示
+      const msg = _dragHoverMsg(node, IA.insertTarget, IA.blocked);
+      if (msg !== IA._msg) { IA._msg = msg; setStatus(msg); }
       renderEdges(); renderMerges(); renderNodes(); return;
     }
 
@@ -760,7 +894,7 @@ function initEvents() {
     } else if (kind === 'move') {
       document.getElementById('TL').innerHTML = '';
       if (IA.moved) {
-        const { id, ox, oy, ghostX, ghostY, insertTarget, snap0 } = IA;
+        const { id, ox, oy, ghostX, ghostY, insertTarget, blocked, snap0 } = IA;
         // redraw の前に IA をクリアする（ドラッグ中表示クラス
         // node-dragging-src が確定後のノードに残るのを防ぐ）
         IA = null;
@@ -769,21 +903,38 @@ function initEvents() {
         const hasEdges = node && S.edges.some(e => e.from === node.id || e.to === node.id);
         const inserted = node ? _doChartInsert(node, insertTarget) : false;
 
-        if (node && !inserted && hasEdges) {
-          // フローに接続済みの記号は「挿入 or 元に戻す」:
-          // 挿入先のない場所へのドロップで接続を保ったまま座標だけ移動すると
-          // 線が引き伸ばされてチャートが崩れるため、元の位置に戻す。
+        if (node && !inserted && blocked) {
+          // 挿入できない場所（起点記号・起点直後の線・自分の接続線）への
+          // ドロップは状態を変えず元の位置に戻す。
           node.x = ox;
           node.y = oy;
-          setStatus('挿入先がないため元の位置に戻しました — 線や記号の上にドロップすると挿入できます');
+          const reasons = {
+            'base':      '起点記号には挿入できないため',
+            'base-edge': '起点直後の線には挿入できないため',
+            'self-edge': '自分自身の接続線には挿入できないため',
+          };
+          setStatus(`${reasons[blocked.reason] || 'ここには挿入できないため'}元の位置に戻しました`);
           redraw();
           return;
         }
 
+        let leftMsg = null;
         if (node && !inserted) {
-          // 未接続の単独記号は従来どおり自由に移動できる
+          // 空き地へのドロップ: ラインから抜き取り（前後をブリッジ接続）、
+          // グループからも外して単独記号としてドロップ位置に配置する。
+          const prevG = node.groupId ? G(node.groupId) : null;
           node.x = ghostX ?? node.x;
           node.y = ghostY ?? node.y;
+          if (hasEdges) {
+            _extractNodeFromChain(node);
+            _syncListOrderFromGraph();
+          }
+          if (hasEdges || prevG) {
+            node.groupId = null;
+            leftMsg = hasEdges
+              ? `ラインから抜き取りました${prevG ? ` — グループ「${prevG.label}」から外れました` : ''}（線や記号にドロップすると再挿入できます）`
+              : `グループ「${prevG.label}」から外れました`;
+          }
         }
 
         graphErrors = {};
@@ -795,9 +946,13 @@ function initEvents() {
           syncChartFromListOrder();
           validateGraph();
           const n = Object.keys(graphErrors).length;
+          const g = node?.groupId ? G(node.groupId) : null;
+          const gTxt = g ? `工程をグループ「${g.label}」に挿入しました` : '工程を挿入しました';
           setStatus(n > 0
-            ? `工程を挿入しました — ルール違反が ${n} 件あります`
-            : '工程を挿入しました — 整列・ルールチェック OK');
+            ? `${gTxt} — ルール違反が ${n} 件あります`
+            : `${gTxt} — 整列・ルールチェック OK`);
+        } else if (leftMsg) {
+          setStatus(leftMsg);
         }
         redraw();
       }

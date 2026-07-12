@@ -4,6 +4,9 @@
 // CORE — 定数 / 状態 / Undo・Redo / ワークスペース
 // ═══════════════════════════════════════════════
 
+/** アプリバージョン（セマンティックバージョニング）。更新時は CHANGELOG.md も更新すること。 */
+const APP_VERSION = '1.5.0';
+
 const C = 20;
 
 const isBase    = t => t === 'naisei' || t === 'gaisei';

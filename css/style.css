@@ -76,6 +76,11 @@ body{
   letter-spacing:.01em;white-space:nowrap;
 }
 .logo-icon{color:var(--acc);font-size:15px;}
+.app-version-badge{
+  font-size:9.5px;font-weight:700;color:var(--mut);background:var(--bg);
+  border:1px solid var(--bdr2);border-radius:8px;padding:1px 7px;
+  letter-spacing:.02em;font-feature-settings:'tnum';
+}
 
 /* ── ツールバーボタン ──────────────────── */
 .tbtn{

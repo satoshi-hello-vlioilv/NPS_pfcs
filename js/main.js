@@ -1152,6 +1152,8 @@ function loadJ(ev) {
 
 function init() {
   if (!S.meta.dt) S.meta.dt = new Date().toISOString().split('T')[0];
+  const verEl = document.getElementById('app-version');
+  if (verEl) verEl.textContent = 'v' + APP_VERSION;
   buildPalette();
   buildChartPalBar();
   initEvents();

@@ -67,8 +67,6 @@ body{
   height:var(--hdr-h);box-shadow:var(--sh-sm);z-index:30;gap:8px;
 }
 .hdr-left,.hdr-right{display:flex;align-items:center;gap:6px;flex-shrink:0;}
-.hdr-center{display:flex;align-items:center;gap:5px;flex:1;
-  justify-content:center;flex-wrap:wrap;}
 
 #hdr h1{
   font-size:14px;font-weight:700;color:var(--txt);
@@ -134,27 +132,46 @@ body{
 
 #main-body{display:flex;flex:1;overflow:hidden;position:relative;}
 
-/* 右エリア（タブ＋コンテンツ）*/
+/* 右エリア（ビュー操作ツールバー＋コンテンツ）*/
 #right-area{display:flex;flex-direction:column;flex:1;overflow:hidden;}
 
-/* タブバー（右エリア内のみ → 近接の法則）*/
+/* ── 第2階層: ビュー切り替えタブ ─────────────────
+   作業空間全体（サイドバー＋コンテンツ）を切り替える上位ナビのため、
+   ヘッダー直下に全幅で配置する（情報アーキテクチャ: 上位ほど上・外側） */
 #main-tabs{
   height:var(--tab-h);background:var(--surf);
   border-bottom:2px solid var(--bdr);
-  display:flex;align-items:stretch;padding:0 16px;
+  display:flex;align-items:stretch;padding:0 14px;
   flex-shrink:0;gap:2px;z-index:20;
 }
 .vtab{
   background:transparent;border:none;
   border-bottom:2px solid transparent;
+  border-radius:8px 8px 0 0;
   padding:0 16px;margin-bottom:-2px;
   font-size:13px;font-weight:600;color:var(--mut);
-  cursor:pointer;transition:color var(--tr),border-color var(--tr);
+  cursor:pointer;transition:color var(--tr),border-color var(--tr),background var(--tr);
   font-family:inherit;display:flex;align-items:center;gap:7px;white-space:nowrap;
 }
 .vtab i{font-size:13px;}
-.vtab:hover{color:var(--txt);}
-.vtab.active{border-bottom-color:var(--acc);color:var(--acc);}
+.vtab:hover{color:var(--txt);background:var(--surf2);}
+.vtab.active{
+  border-bottom-color:var(--acc);color:var(--acc);
+  background:linear-gradient(180deg,rgba(37,99,235,.06),rgba(37,99,235,0));
+}
+
+/* ── 第3階層: ビュー操作ツールバー ────────────────
+   選択中のビュー内で行う操作だけをタブ直下にまとめる。
+   タブより一段淡い背景・細い罫線で従属関係を示す（色彩の階調） */
+#view-toolbar{
+  display:flex;align-items:center;gap:5px;flex-wrap:wrap;
+  padding:5px 14px;background:var(--surf2);
+  border-bottom:1px solid var(--bdr);flex-shrink:0;z-index:15;
+}
+.vtb-group{display:flex;align-items:center;gap:4px;}
+.vtb-chart{display:flex;align-items:center;gap:5px;flex-wrap:wrap;}
+.vtb-spacer{flex:1;}
+#view-toolbar .tbtn:hover{background:#e8edf5;}
 
 #main-content{display:flex;flex:1;overflow:hidden;position:relative;}
 .view-pane{display:none;flex:1;overflow:hidden;flex-direction:column;}
@@ -343,7 +360,7 @@ body{
 
 #rp{
   position:fixed;
-  top:calc(var(--hdr-h));
+  top:calc(var(--hdr-h) + var(--tab-h));
   bottom:var(--sbar-h);
   right:0;width:var(--rp);
   background:var(--surf2);border-left:1px solid var(--bdr);
@@ -530,7 +547,7 @@ body{
    トースト通知（接続エラーなど、見落としやすい失敗を明示）
    ══════════════════════════════════════════════ */
 .toast-host{
-  position:fixed;top:64px;left:50%;transform:translateX(-50%);
+  position:fixed;top:calc(var(--hdr-h) + var(--tab-h) + 14px);left:50%;transform:translateX(-50%);
   z-index:9999;display:flex;flex-direction:column;align-items:center;gap:8px;
   pointer-events:none;
 }
@@ -983,7 +1000,7 @@ body{
    印刷
    ══════════════════════════════════════════════ */
 @media print{
-  #hdr,#sid,#main-tabs,#sbar,#view-list,#rp,#rp-pull,#guide-float,#guide-toggle-btn{display:none!important;}
+  #hdr,#sid,#main-tabs,#view-toolbar,#sbar,#view-list,#rp,#rp-pull,#guide-float,#guide-toggle-btn{display:none!important;}
   #main,#main-body,#right-area,#main-content{display:block;}
   #view-chart{display:block;}
   #cwrap{overflow:visible;background:#fff;position:static;}

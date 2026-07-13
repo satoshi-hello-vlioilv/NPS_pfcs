@@ -515,7 +515,14 @@ function updateMeta(k, v) { S.meta[k] = v; }
 
 function syncLabel(nid, val) {
   const n = N(nid); if (!n) return;
-  n.label = val; redraw();
+  n.label = val;
+  // redraw() はリスト表示中に updateListPanel() でリストDOMを再構築するため、
+  // インライン編集の入力欄が1文字目で破棄されフォーカスが外れてしまう。
+  // 入力中はチャート描画とプロパティ表示のみ更新し、リスト行の再構築は
+  // 編集確定（blur/Enter）時に行う。
+  renderNodes();
+  updateProps();
+  _scheduleLS();
 }
 
 function updateNP(nid, f, v) {

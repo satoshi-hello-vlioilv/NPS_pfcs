@@ -2068,6 +2068,8 @@ function _lfItemHTML(node, nums) {
       <input class="lf-name-inp" value="${esc(node.label)}"
         placeholder="${esc(dispName)}" style="color:${sd.color}"
         oninput="syncLabel('${node.id}',this.value)"
+        onchange="setTimeout(updateListPanel,0)"
+        onkeydown="if(event.key==='Enter')this.blur()"
         onclick="event.stopPropagation()"
         title="クリックで工程名を編集 / ダブルクリックで詳細編集">
       ${noteHtml}
@@ -3630,18 +3632,22 @@ function switchView(view) {
     document.getElementById(`view-${v}`)?.classList.toggle('active', v === view);
     document.getElementById(`tab-${v}`)?.classList.toggle('active', v === view);
   });
-  document.getElementById('chart-tools').style.display = view === 'chart' ? 'flex' : 'none';
+  const isChart   = view === 'chart';
+  const isDocView = view === 'chart' || view === 'list';
 
-  const isChart = view === 'chart';
+  // ビュー操作ツールバー: チャート/リスト（編集系ビュー）でのみ表示。
+  // チャート専用の操作グループ（ズーム・表示切替・整列など）はチャート時のみ。
+  const vtb = document.getElementById('view-toolbar');
+  if (vtb) vtb.style.display = isDocView ? 'flex' : 'none';
+  document.getElementById('chart-tools').style.display = isChart ? 'flex' : 'none';
+
   document.getElementById('pmbar').style.display         = isChart ? '' : 'none';
   document.getElementById('pal-scroll').style.display    = isChart ? '' : 'none';
   document.getElementById('sid-list').style.display      = view === 'list'     ? 'flex' : 'none';
   document.getElementById('sid-routemap').style.display  = view === 'routemap' ? 'flex' : 'none';
   document.getElementById('sid-capacity').style.display  = view === 'capacity' ? 'flex' : 'none';
 
-
   // チャート・リスト時以外はプロパティパネル(右ドロワー)を非表示にし、開いている場合は閉じる
-  const isDocView = view === 'chart' || view === 'list';
   const rpPull = document.getElementById('rp-pull');
   const rpToggle = document.getElementById('rp-toggle-btn');
   if (rpPull) rpPull.style.display = isDocView ? '' : 'none';

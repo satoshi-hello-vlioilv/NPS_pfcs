@@ -9,7 +9,7 @@
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-<!-- ═══════ ヘッダー ═══════ -->
+<!-- ═══════ ヘッダー（第1階層：アプリ全体に効く操作のみ）═══════ -->
 <header id="hdr">
   <div class="hdr-left">
     <h1>
@@ -18,53 +18,12 @@
       <span id="app-version" class="app-version-badge" title="アプリバージョン"></span>
     </h1>
   </div>
-  <div class="hdr-center" id="chart-tools">
-    <button class="tbtn" id="bundo" onclick="undo()" disabled title="元に戻す (Ctrl+Z)">
-      <i class="fa-solid fa-rotate-left"></i> 戻る
-    </button>
-    <button class="tbtn" id="bredo" onclick="redo()" disabled title="やり直す (Ctrl+Y)">
-      <i class="fa-solid fa-rotate-right"></i> 進む
-    </button>
-    <div class="tsep"></div>
-    <button class="tbtn icon-only" onclick="doZoom(1/1.2)" title="縮小">
-      <i class="fa-solid fa-minus"></i>
-    </button>
-    <span class="zdsp" id="zdsp">100%</span>
-    <button class="tbtn icon-only" onclick="doZoom(1.2)" title="拡大">
-      <i class="fa-solid fa-plus"></i>
-    </button>
-    <button class="tbtn" onclick="resetView()" title="100%表示">100%</button>
-    <button class="tbtn" onclick="fitView()" title="全体を画面に合わせる">
-      <i class="fa-solid fa-expand"></i> 全体表示
-    </button>
-    <div class="tsep"></div>
-    <button class="tbtn on" id="btn-nums" onclick="toggleNums()"
-      title="加工・検査に通し番号を表示/非表示">
-      <i class="fa-solid fa-list-ol"></i> 番号表示
-    </button>
-    <button class="tbtn" id="btn-hidden-wire" onclick="toggleHiddenWire()"
-      title="起点（内製/外製）直後などの非表示配線を作成中だけ表示します。印刷・画像保存では引き続き非表示です。">
-      <i class="fa-solid fa-eye-low-vision"></i> 非表示配線
-    </button>
-    <button class="tbtn" id="btn-move-only" onclick="toggleMoveOnlyMode()"
-      title="ONにすると、ドラッグで配線を組み替えずに記号の位置だけを調整できます（配置の微調整用）。">
-      <i class="fa-solid fa-arrows-up-down-left-right"></i> 配置調整モード
-    </button>
-    <button class="tbtn" onclick="alignLayout()"
-      title="記号間隔を均等に整列し、ルールをチェックします">
-      <i class="fa-solid fa-align-center"></i> 整列・チェック
-    </button>
-  </div>
-    <div class="hdr-right">
-    <div class="imp-mode-group" title="改善前/改善後モードを切り替え">
+  <div class="hdr-right">
+    <div class="imp-mode-group" title="改善前/改善後モードを切り替え（全ビュー共通のデータ切替）">
       <span class="imp-mode-label">改善</span>
       <button class="imp-mode-btn active" data-mode="before" onclick="setImprovementMode('before')">改善前</button>
       <button class="imp-mode-btn" data-mode="after" onclick="setImprovementMode('after')">改善後</button>
     </div>
-    <div class="tsep"></div>
-    <button class="tbtn danger" onclick="clearAll()" title="全データを消去">
-      <i class="fa-solid fa-trash-can"></i> 全消去
-    </button>
     <div class="tsep"></div>
     <button class="tbtn" onclick="trigLoad()" title="JSONファイルを読み込む">
       <i class="fa-solid fa-folder-open"></i> 読込
@@ -80,12 +39,30 @@
       <i class="fa-solid fa-image"></i> 画像保存
     </button>
     <div class="tsep"></div>
-    <button class="tbtn icon-only" id="rp-toggle-btn" onclick="toggleDrawer()"
-      title="プロパティパネルを開く / 閉じる">
-      <i class="fa-solid fa-table-columns"></i>
+    <button class="tbtn danger" onclick="clearAll()" title="全データを消去">
+      <i class="fa-solid fa-trash-can"></i> 全消去
     </button>
   </div>
 </header>
+<!-- ═══════ ビュー切り替えタブ（第2階層：作業空間全体を切り替える）═══════ -->
+<nav id="main-tabs">
+  <button class="vtab active" id="tab-chart" onclick="switchView('chart')">
+    <i class="fa-solid fa-diagram-project"></i> チャート
+  </button>
+  <button class="vtab" id="tab-list" onclick="switchView('list')">
+    <i class="fa-solid fa-list-check"></i> リスト
+  </button>
+  <button class="vtab" id="tab-routemap" onclick="switchView('routemap')">
+    <i class="fa-solid fa-table-cells"></i> 工程経路図
+  </button>
+  <button class="vtab" id="tab-capacity" onclick="switchView('capacity')">
+    <i class="fa-solid fa-chart-gantt"></i> 部品別工程別能力表
+  </button>
+  <div class="active-chart-indicator">
+    <i class="fa-solid fa-circle-dot" style="color:#6366f1;font-size:9px"></i>
+    <span id="active-chart-name-display">工程図</span>
+  </div>
+</nav>
 <!-- ═══════ メイン ═══════ -->
 <div id="main">
   <div id="main-body">
@@ -186,27 +163,62 @@
       </div>
     </aside>
     <div id="sid-resizer" title="ドラッグして幅を調整"></div>
-    <!-- 右エリア（タブ + コンテンツ）-->
+    <!-- 右エリア（ビュー操作ツールバー + コンテンツ）-->
     <div id="right-area">
-      <!-- ビュー切り替えタブ（右エリアのみ → 近接の法則）-->
-      <nav id="main-tabs">
-        <button class="vtab active" id="tab-chart" onclick="switchView('chart')">
-          <i class="fa-solid fa-diagram-project"></i> チャート
-        </button>
-        <button class="vtab" id="tab-list" onclick="switchView('list')">
-          <i class="fa-solid fa-list-check"></i> リスト
-        </button>
-        <button class="vtab" id="tab-routemap" onclick="switchView('routemap')">
-          <i class="fa-solid fa-table-cells"></i> 工程経路図
-        </button>
-        <button class="vtab" id="tab-capacity" onclick="switchView('capacity')">
-          <i class="fa-solid fa-chart-gantt"></i> 部品別工程別能力表
-        </button>
-        <div class="active-chart-indicator">
-          <i class="fa-solid fa-circle-dot" style="color:#6366f1;font-size:9px"></i>
-          <span id="active-chart-name-display">工程図</span>
+      <!-- ビュー操作ツールバー（第3階層：選択中のビューで行う操作だけを置く）-->
+      <div id="view-toolbar">
+        <div class="vtb-group" title="編集履歴">
+          <button class="tbtn" id="bundo" onclick="undo()" disabled title="元に戻す (Ctrl+Z)">
+            <i class="fa-solid fa-rotate-left"></i> 戻る
+          </button>
+          <button class="tbtn" id="bredo" onclick="redo()" disabled title="やり直す (Ctrl+Y)">
+            <i class="fa-solid fa-rotate-right"></i> 進む
+          </button>
         </div>
-      </nav>
+        <div id="chart-tools" class="vtb-chart">
+          <div class="tsep"></div>
+          <div class="vtb-group" title="表示倍率">
+            <button class="tbtn icon-only" onclick="doZoom(1/1.2)" title="縮小">
+              <i class="fa-solid fa-minus"></i>
+            </button>
+            <span class="zdsp" id="zdsp">100%</span>
+            <button class="tbtn icon-only" onclick="doZoom(1.2)" title="拡大">
+              <i class="fa-solid fa-plus"></i>
+            </button>
+            <button class="tbtn" onclick="resetView()" title="100%表示">100%</button>
+            <button class="tbtn" onclick="fitView()" title="全体を画面に合わせる">
+              <i class="fa-solid fa-expand"></i> 全体表示
+            </button>
+          </div>
+          <div class="tsep"></div>
+          <div class="vtb-group" title="表示切替">
+            <button class="tbtn on" id="btn-nums" onclick="toggleNums()"
+              title="加工・検査に通し番号を表示/非表示">
+              <i class="fa-solid fa-list-ol"></i> 番号表示
+            </button>
+            <button class="tbtn" id="btn-hidden-wire" onclick="toggleHiddenWire()"
+              title="起点（内製/外製）直後などの非表示配線を作成中だけ表示します。印刷・画像保存では引き続き非表示です。">
+              <i class="fa-solid fa-eye-low-vision"></i> 非表示配線
+            </button>
+          </div>
+          <div class="tsep"></div>
+          <div class="vtb-group" title="編集モード・整列">
+            <button class="tbtn" id="btn-move-only" onclick="toggleMoveOnlyMode()"
+              title="ONにすると、ドラッグで配線を組み替えずに記号の位置だけを調整できます（配置の微調整用）。">
+              <i class="fa-solid fa-arrows-up-down-left-right"></i> 配置調整モード
+            </button>
+            <button class="tbtn" onclick="alignLayout()"
+              title="記号間隔を均等に整列し、ルールをチェックします">
+              <i class="fa-solid fa-align-center"></i> 整列・チェック
+            </button>
+          </div>
+        </div>
+        <div class="vtb-spacer"></div>
+        <button class="tbtn icon-only" id="rp-toggle-btn" onclick="toggleDrawer()"
+          title="プロパティパネルを開く / 閉じる">
+          <i class="fa-solid fa-table-columns"></i>
+        </button>
+      </div>
       <div id="main-content">
         <!-- ── チャートビュー ── -->
         <div id="view-chart" class="view-pane active">

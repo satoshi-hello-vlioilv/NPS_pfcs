@@ -246,6 +246,112 @@ function _getGroupedOrder() {
 // ── レイアウト共通計算 ──────────────────────────
 
 /**
+ * グループ行の縦方向の並び順を、背骨グループを中心とした構造で決定する。
+ * 従来は S.groups の登録順（配置とは無関係な配列順）で単純に上から積んでいたため、
+ * データ量や合流構造を無視した不規則な配置になっていた。
+ *
+ * アルゴリズム:
+ *   1. 背骨グループ（メインライン）を中心行に据える
+ *   2. 背骨へ合流する（さらにその先へ合流する子孫も含む）グループを
+ *      「枝」として木構造にまとめ、各枝の合計ノード数（データ量）を
+ *      背骨の上側・下側に交互ではなく、より少ない側へ足していく貪欲法で
+ *      振り分け、上下の分量ができるだけ均等になるようにする
+ *   3. 背骨と無関係な独立グループ（合流のないグループ）はデータ量の多い順に
+ *      最下段へ積む（背骨中心の構造を崩さないよう分離して配置）
+ *   4. グループなし行は常に最下段
+ *
+ * @param {Array<{groupId:string|null, group:object|null, nodes:object[]}>} grouped
+ * @returns {{ordered: object[], bbIndex: number}} ordered: 上から下への行配列、bbIndex: 背骨行のインデックス
+ */
+function _orderGroupsForLayout(grouped) {
+  const byId = new Map(grouped.map(row => [row.groupId, row]));
+  const ungroupedRow = grouped.find(row => row.groupId == null && row.nodes.length);
+  const realRows = grouped.filter(row => row.groupId != null && row.nodes.length);
+
+  if (!realRows.length) return { ordered: ungroupedRow ? [ungroupedRow] : [], bbIndex: -1 };
+
+  const bbId = getBackboneGroupId();
+  const bbRow = bbId ? byId.get(bbId) : null;
+
+  // 合流先グループを解決: subGroupId → 合流先ノードの所属グループID
+  const mergeTargetGroup = new Map();
+  for (const m of (S.merges || [])) {
+    const tgt = N(m.targetNodeId);
+    if (tgt && tgt.groupId && byId.has(tgt.groupId)) mergeTargetGroup.set(m.subGroupId, tgt.groupId);
+  }
+  const childrenOf = new Map();
+  for (const [subId, tgtGid] of mergeTargetGroup) {
+    if (!childrenOf.has(tgtGid)) childrenOf.set(tgtGid, []);
+    childrenOf.get(tgtGid).push(subId);
+  }
+
+  // 木構造（背骨を根とする）を DFS で辿り、枝ごとに「行の並び＋合計ノード数」を得る。
+  // 同じ枝の中で合流を重ねるグループは連続して隣接させ、視覚的なまとまりを保つ。
+  const visited = new Set();
+  function collectBranch(gid) {
+    if (gid == null || visited.has(gid) || !byId.has(gid)) return { rows: [], weight: 0 };
+    visited.add(gid);
+    const row = byId.get(gid);
+    let rows = [row];
+    let weight = row.nodes.length;
+    const kids = (childrenOf.get(gid) || []).slice()
+      .sort((a, b) => (byId.get(b)?.nodes.length || 0) - (byId.get(a)?.nodes.length || 0));
+    for (const k of kids) {
+      const sub = collectBranch(k);
+      rows = rows.concat(sub.rows);
+      weight += sub.weight;
+    }
+    return { rows, weight };
+  }
+
+  let bbRows = [];
+  if (bbRow) {
+    visited.add(bbRow.groupId);
+    bbRows = [bbRow];
+  }
+
+  // 背骨に直接合流する枝を、データ量の多い順に上下へ貪欲配分してバランスさせる
+  const directChildren = bbRow ? (childrenOf.get(bbRow.groupId) || []) : [];
+  const branches = directChildren
+    .map(gid => collectBranch(gid))
+    .filter(b => b.rows.length)
+    .sort((a, b) => b.weight - a.weight);
+
+  const above = [], below = [];
+  let aboveW = 0, belowW = 0;
+  for (const br of branches) {
+    if (aboveW <= belowW) { above.push(br); aboveW += br.weight; }
+    else                  { below.push(br); belowW += br.weight; }
+  }
+
+  // 背骨自体が無い場合（グループ0件など）は全グループをデータ量の多い順に単純に積む
+  if (!bbRow) {
+    const rest = realRows.filter(r => !visited.has(r.groupId))
+      .sort((a, b) => b.nodes.length - a.nodes.length);
+    for (const r of rest) collectBranch(r.groupId); // visited 管理のためだけに通す
+    const ordered = rest.slice();
+    if (ungroupedRow) ordered.push(ungroupedRow);
+    return { ordered, bbIndex: -1 };
+  }
+
+  // 背骨と合流関係にない独立グループ（別ライン）はデータ量の多い順に最下段へ
+  const independents = realRows
+    .filter(r => !visited.has(r.groupId))
+    .sort((a, b) => b.nodes.length - a.nodes.length);
+  for (const r of independents) visited.add(r.groupId);
+
+  const ordered = [
+    ...above.flatMap(b => b.rows),
+    ...bbRows,
+    ...below.flatMap(b => b.rows),
+    ...independents,
+  ];
+  if (ungroupedRow) ordered.push(ungroupedRow);
+
+  return { ordered, bbIndex: above.reduce((s, b) => s + b.rows.length, 0) };
+}
+
+/**
  * グループ行を配置する（alignLayout と完全同一のギャップ規則を使用）。
  *
  * ギャップ規則（alignLayout と同一）:
@@ -257,7 +363,8 @@ function _getGroupedOrder() {
  *   1. 非サブグループ行を先に左→右で配置する（合流先のXを確定）
  *   2. merge 未設定のサブグループ行を通常配置
  *   3. 合流接続のあるサブグループを右→左で逆算配置
- *   4. X/Y を各ノードに書き込む
+ *   4. 背骨グループを中心行としてデータ量に応じ上下へ振り分けた並び順で
+ *      X/Y を各ノードに書き込む（背骨から遠いほど上下外側へ）
  */
 function _layoutRows(grouped, _NODE_GAP_UNUSED, LEFT_MARGIN) {
   const nodeXMap = {};  // nid → node.x (unpan=左端, other=中心)
@@ -319,15 +426,19 @@ function _layoutRows(grouped, _NODE_GAP_UNUSED, LEFT_MARGIN) {
     }
   }
 
-  // ── Step3: X/Y を各ノードに書き込む ─────────────
-  let yi = 0;
-  for (const { nodes } of grouped) {
+  // ── Step3: 背骨中心の並び順で X/Y を各ノードに書き込む ─────────────
+  // 背骨グループを基準行(オフセット0)とし、合流構造・データ量を考慮して
+  // バランスよく振り分けた行順に沿って上下へ配置する（_orderGroupsForLayout）。
+  const { ordered, bbIndex } = _orderGroupsForLayout(grouped);
+  for (let i = 0; i < ordered.length; i++) {
+    const { nodes } = ordered[i];
     if (!nodes.length) continue;
+    const rowOffset = bbIndex >= 0 ? (i - bbIndex) : i;
+    const yi = rowOffset * C * 14;
     for (const node of nodes) {
       node.x = nodeXMap[node.id] ?? node.x;
       node.y = snapV(yi);
     }
-    yi += C * 14;
   }
 }
 
@@ -471,7 +582,8 @@ function validateGraph() {
       if (!okP || !okC) errs.push('「運搬」の前後は「停滞」記号である必要があります。');
     }
     if (outdeg[n.id] === 0) {
-      if (n.type !== 'tt_k' && S.nodes.length > 1)
+      // 「工程待ち」は工程途中の一時的な滞留を表すため、後続未接続でもエラーとしない
+      if (n.type !== 'tt_k' && n.type !== 'tt_p' && S.nodes.length > 1)
         errs.push('最終工程は「停滞（完成品置場）」である必要があります。');
     } else if (n.type === 'tt_k') {
       errs.push('「停滞（完成品置場）」から次の工程へは接続できません。');
@@ -491,4 +603,7 @@ function alignLayout() {
   const n = Object.keys(graphErrors).length;
   setStatus(n > 0 ? `整列完了 — ルール違反が ${n} 件あります` : '整列完了 — ルールチェック OK');
   redraw();
+  // 背骨中心の配置では枝グループが背骨より上（負のY）へ移動することがあり、
+  // 直前の表示範囲では新しい配置全体が見えない場合があるため、毎回ビューを合わせ直す。
+  fitView();
 }

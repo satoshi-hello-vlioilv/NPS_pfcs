@@ -696,7 +696,7 @@ function onNodeMD(ev) {
 
   // 通常の単一選択・移動
   S.sel = { kind:'node', id:nid };
-  IA = { kind:'move', id:nid, ox:node.x, oy:node.y, mx:w.x, my:w.y, snap0:ss(), moved:false };
+  IA = { kind:'move', id:nid, ox:node.x, oy:node.y, mx:w.x, my:w.y, snap0:ss(), moved:false, freeMove:moveOnlyMode };
   redraw();
 }
 
@@ -763,12 +763,22 @@ function initEvents() {
 
     if (IA.kind === 'move') {
       const node = N(IA.id); if (!node) return;
-      // ゴースト位置を追跡（ノード自体は元位置を維持→接続線はそのまま表示）
       const rawX = IA.ox + (w.x - IA.mx);
       const rawY = IA.oy + (w.y - IA.my);
+      IA.moved = true;
+
+      if (IA.freeMove) {
+        // 配置調整モード: 配線の組み替え（挿入/抜き取り）を行わず座標だけ更新する。
+        // 接続線は routePath が現在座標を参照するため、そのまま追従して表示される。
+        node.x = snapV(rawX);
+        node.y = snapV(rawY);
+        document.getElementById('TL').innerHTML = '';
+        renderEdges(); renderMerges(); renderNodes(); return;
+      }
+
+      // ゴースト位置を追跡（ノード自体は元位置を維持→接続線はそのまま表示）
       IA.ghostX = snapV(rawX);
       IA.ghostY = snapV(rawY);
-      IA.moved = true;
       // インサート候補検知: グリッド吸着前の実ポインタ位置で判定する
       // （スナップ後の座標だと隣接ノードに吸着して意図しないターゲットになるため）
       const origX = node.x, origY = node.y;
@@ -893,7 +903,16 @@ function initEvents() {
 
     } else if (kind === 'move') {
       document.getElementById('TL').innerHTML = '';
-      if (IA.moved) {
+      if (IA.moved && IA.freeMove) {
+        // 配置調整モード: 挿入/抜き取り判定を行わず、位置の確定のみ行う（配線は保持）
+        const { snap0 } = IA;
+        IA = null;
+        graphErrors = {};
+        S._undo.push(snap0);
+        if (S._undo.length > 100) S._undo.shift();
+        S._redo = []; rUB();
+        redraw();
+      } else if (IA.moved) {
         const { id, ox, oy, ghostX, ghostY, insertTarget, blocked, snap0 } = IA;
         // redraw の前に IA をクリアする（ドラッグ中表示クラス
         // node-dragging-src が確定後のノードに残るのを防ぐ）
@@ -913,7 +932,7 @@ function initEvents() {
             'base-edge': '起点直後の線には挿入できないため',
             'self-edge': '自分自身の接続線には挿入できないため',
           };
-          setStatus(`${reasons[blocked.reason] || 'ここには挿入できないため'}元の位置に戻しました`);
+          showToast(`⚠ ${reasons[blocked.reason] || 'ここには挿入できないため'}元の位置に戻しました`, 'error');
           redraw();
           return;
         }
@@ -988,7 +1007,7 @@ function initEvents() {
       if (tgt && tgt.nid !== IA.fromId) {
         // ── 循環接続チェック ──────────────────────────
         if (_wouldCreateCycle(IA.fromId, tgt.nid)) {
-          setStatus('⚠ 循環接続（ループ）は作成できません — 工程順は DAG（有向非巡回グラフ）でなければなりません');
+          showToast('⚠ 循環接続（ループ）は作成できません — 工程順は DAG（有向非巡回グラフ）でなければなりません', 'error');
         } else {
           const fn = N(IA.fromId), tn = N(tgt.nid);
           // ── 異なるグループ間の接続チェック ─────────────
@@ -1008,12 +1027,12 @@ function initEvents() {
               redraw(); fitView();
               setStatus('グループ合流を設定しました');
             } else {
-              setStatus('⚠ 別グループへの直接接続はできません — 合流させる場合は合流先記号の上/下ポートに接続してください');
+              showToast('⚠ 別グループへの直接接続はできません — 合流させる場合は合流先記号の上/下ポートに接続してください', 'error');
             }
           } else {
             // 重複エッジチェック（同一経路のエッジが既にある場合はスキップ）
             if (_edgeExists(IA.fromId, IA.fromPort, tgt.nid, tgt.port)) {
-              setStatus('⚠ この接続は既に存在します');
+              showToast('⚠ この接続は既に存在します', 'warn');
             } else {
               pushUndo();
               const edge = { id:uid(), from:IA.fromId, fromPort:IA.fromPort, to:tgt.nid, toPort:tgt.port };
@@ -1294,6 +1313,8 @@ async function _renderPageToBlob(vbX, vbY, vbW, vbH, canvasW, canvasH, marginMM,
     text { font-family: 'Noto Sans JP', 'Hiragino Kaku Gothic Pro', sans-serif; }
     .ph { display: none; }
     .insert-hint-anim { display: none; }
+    /* 非表示配線の作成中プレビュー表示は画像保存には出さない（最終出力仕様） */
+    .eg[data-hidden-wire="1"] path { stroke: transparent !important; }
   `;
   clone.insertBefore(styleEl, clone.firstChild);
 

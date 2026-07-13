@@ -168,11 +168,11 @@ function renderEdges() {
     // ゴーストドラッグ中も元位置のエッジはそのまま表示する
     const d      = routePath(fn, e.fromPort, tn, e.toPort);
     const sel    = S.sel?.kind === 'edge' && S.sel.id === e.id;
-    const hidden = e.hidden && !sel;
-    const stroke = sel ? '#f59e0b' : (hidden ? 'transparent' : '#475569');
+    const hidden = e.hidden && !sel && !showHiddenWire;
+    const stroke = sel ? '#f59e0b' : (hidden ? 'transparent' : (e.hidden ? '#94a3b8' : '#475569'));
     const sw     = sel ? 2.5 : 1.8;
-    const dash   = e.hidden && sel ? '6,4' : 'none';
-    h += `<g class="eg" data-eid="${e.id}" style="cursor:pointer">
+    const dash   = e.hidden && (sel || showHiddenWire) ? '6,4' : 'none';
+    h += `<g class="eg" data-eid="${e.id}" data-hidden-wire="${e.hidden ? '1' : '0'}" style="cursor:pointer">
       <path d="${d}" fill="none" stroke="transparent" stroke-width="14"/>
       <path d="${d}" fill="none" stroke="${stroke}" stroke-width="${sw}" stroke-dasharray="${dash}"/>
     </g>`;
@@ -366,7 +366,7 @@ function renderNodes() {
     const num = isNumType(node.type) ? nums[node.id] ?? null : null;
     const tx  = node.type === 'unpan' ? r : 0;
     // ゴーストドラッグ中は元ノードを半透明化
-    const isGhostSrc = (typeof IA !== 'undefined' && IA?.kind === 'move' && IA.moved && IA.id === node.id);
+    const isGhostSrc = (typeof IA !== 'undefined' && IA?.kind === 'move' && IA.moved && IA.id === node.id && !IA.freeMove);
 
     h += `<g class="ng${isGhostSrc ? ' node-dragging-src' : ''}" data-nid="${node.id}" transform="translate(${node.x},${node.y})" style="cursor:move">`;
 
@@ -574,6 +574,15 @@ function updateProps() {
           node.unit    && `<div class="rp-meta-row"><i class="fa-solid fa-box rp-meta-ico"></i><span>${esc(node.unit)}${node.unitQty ? ' × '+node.unitQty : ''}</span></div>`,
           node.comment && `<div class="rp-meta-row rp-meta-comment"><i class="fa-regular fa-comment-dots rp-meta-ico"></i><span>${esc(node.comment)}</span></div>`,
         ].filter(Boolean).join('');
+        // ── 所属グループ表示（クリックで所属先を変更） ──
+        const grp = node.groupId ? G(node.groupId) : null;
+        const grpHtml = `
+          <button class="rp-grp-row" style="${grp ? `border-color:${grp.color}40;background:${grp.color}0f;` : ''}"
+            onclick="openGroupPop('${node.id}',this)" title="クリックしてグループを変更">
+            <span class="rp-grp-dot" style="background:${grp ? grp.color : '#cbd5e1'}"></span>
+            <span class="rp-grp-lbl" style="${grp ? `color:${grp.color}` : ''}">${grp ? esc(grp.label) : 'グループなし'}</span>
+            <i class="fa-solid fa-chevron-down rp-grp-chv"></i>
+          </button>`;
         selHtml = `
           <div class="p-sec rp-sel-sec" style="border-left:3px solid ${sd.color};">
             <div class="p-sec-ttl">
@@ -586,17 +595,27 @@ function updateProps() {
             </div>
             <p class="rp-sel-label">${esc(node.label || '（工程名未設定）')}</p>
             ${badgesHTML}
+            ${grpHtml}
             ${metaRows ? `<div class="rp-meta">${metaRows}</div>` : ''}
             <div style="display:flex;gap:7px;margin-top:10px;">
               <button class="btn bp" style="flex:1;font-size:11px;padding:6px;"
                 onclick="openModal('${node.id}')">
                 <i class="fa-solid fa-pen-to-square"></i> 編集
               </button>
+              <button class="btn bg-w" style="flex:1;font-size:11px;padding:6px;"
+                onclick="duplicateNode('${node.id}')" title="この工程を複製">
+                <i class="fa-solid fa-copy"></i> 複製
+              </button>
               <button class="btn bg-w" style="flex:1;font-size:11px;padding:6px;color:#dc2626;border-color:#fecaca;"
                 onclick="deleteSel()">
                 <i class="fa-solid fa-trash-can"></i> 削除
               </button>
             </div>
+            ${grp ? `
+            <button class="btn bg-w" style="width:100%;font-size:11px;padding:6px;margin-top:6px;"
+              onclick="duplicateGroup('${grp.id}')" title="所属グループ全体（起点含む）を複製">
+              <i class="fa-solid fa-clone"></i> グループ「${esc(grp.label)}」を複製
+            </button>` : ''}
           </div>`;
       }
     } else {

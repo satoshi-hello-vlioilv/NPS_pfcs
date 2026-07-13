@@ -2092,6 +2092,10 @@ function _lfItemHTML(node, nums) {
         onclick="event.stopPropagation();focusNode('${node.id}')">
         <i class="fa-solid fa-magnifying-glass"></i>
       </button>
+      <button class="l-act-btn" title="この工程を複製"
+        onclick="event.stopPropagation();duplicateNode('${node.id}')">
+        <i class="fa-solid fa-copy"></i>
+      </button>
       <button class="l-act-btn lf-del-btn" title="削除"
         onclick="event.stopPropagation();_lfDeleteNode('${node.id}')">
         <i class="fa-solid fa-trash-can"></i>
@@ -2329,6 +2333,10 @@ function _lfActiveGroupsHTML() {
       <button class="l-act-btn" title="グループ名を変更"
         onclick="event.stopPropagation();_lfRenameGroup('${g.id}',this)">
         <i class="fa-solid fa-pen"></i>
+      </button>
+      <button class="l-act-btn" title="グループ全体を複製（起点・内部の接続線を含む）"
+        onclick="event.stopPropagation();duplicateGroup('${g.id}')">
+        <i class="fa-solid fa-clone"></i>
       </button>
       <button class="l-act-btn lf-del-btn" title="グループを削除"
         onclick="event.stopPropagation();deleteGroup('${g.id}')">
@@ -3716,6 +3724,25 @@ function toggleNums() {
   redraw();
 }
 
+/** 起点直後などの非表示配線（最終出力では隠れる線）を作成中だけ可視化するモードを切り替える */
+function toggleHiddenWire() {
+  showHiddenWire = !showHiddenWire;
+  document.getElementById('btn-hidden-wire').classList.toggle('on', showHiddenWire);
+  renderEdges();
+  setStatus(showHiddenWire
+    ? '非表示配線を表示中 — 最終出力（印刷・画像保存）では引き続き非表示です'
+    : '非表示配線の表示をオフにしました');
+}
+
+/** ドラッグ移動時の挙動を切り替える: ON=配線を保持したまま位置だけ調整 / OFF=線・記号への挿入 */
+function toggleMoveOnlyMode() {
+  moveOnlyMode = !moveOnlyMode;
+  document.getElementById('btn-move-only').classList.toggle('on', moveOnlyMode);
+  setStatus(moveOnlyMode
+    ? '配置調整モード ON — ドラッグしても配線は切れず、位置だけ動かせます'
+    : '配置調整モード OFF — ドラッグで線・記号への挿入ができます');
+}
+
 // 右ドロワー
 let _drawerOpen = false;
 
@@ -3782,6 +3809,63 @@ function setNodeGroup(nid, gid) {
   pushUndo();
   node.groupId = gid || null;
   redraw();
+}
+
+/** 工程記号を1件複製する（リスト/チャート/プロパティパネル共通）。
+ *  複製はどの線にも繋がっていない状態で追加され、ドラッグで好きな位置に挿入できる。 */
+function duplicateNode(nid) {
+  const src = N(nid); if (!src) return null;
+  pushUndo();
+  const copy = JSON.parse(JSON.stringify(src));
+  copy.id = uid();
+  if (copy.label) copy.label += ' (コピー)';
+  copy.y = src.y + C * 3; // 3マス分下にずらして元の記号と重ならないようにする
+  S.nodes.push(copy);
+  _insertInListOrder(copy.id, src.id);
+  S.sel = { kind:'node', id: copy.id };
+  redraw();
+  setStatus(`「${getEffectiveLabel(src) || SYMS[src.type].name}」を複製しました — 線や記号にドラッグすると挿入できます`);
+  return copy;
+}
+
+/** グループ全体（起点・内部の接続線を含む）を複製し、他と重ならない位置に独立コピーとして追加する。
+ *  外部への接続（合流・別グループからの入力）は複製されない。 */
+function duplicateGroup(gid) {
+  const g = G(gid); if (!g) return null;
+  const members = S.nodes.filter(n => n.groupId === gid);
+  if (!members.length) { setStatus('空のグループは複製できません'); return null; }
+  pushUndo();
+
+  const newG = { ...JSON.parse(JSON.stringify(g)), id: uid(), label: g.label + ' (コピー)', isDefault: false };
+  S.groups.push(newG);
+
+  const minY    = Math.min(...members.map(n => n.y));
+  const allMaxY = S.nodes.length ? Math.max(...S.nodes.map(n => n.y)) : 0;
+  const dy      = (allMaxY - minY) + 140; // 既存の全記号より下へまとめて配置
+
+  const nidMap = {};
+  const copies = members.map(n => {
+    const c = JSON.parse(JSON.stringify(n));
+    nidMap[n.id] = c.id = uid();
+    c.groupId = newG.id;
+    c.y += dy;
+    return c;
+  });
+  S.nodes.push(...copies);
+
+  const memberIds = new Set(members.map(n => n.id));
+  const newEdges = S.edges
+    .filter(e => memberIds.has(e.from) && memberIds.has(e.to))
+    .map(e => ({ ...e, id: uid(), from: nidMap[e.from], to: nidMap[e.to] }));
+  S.edges.push(...newEdges);
+
+  S.listOrder.push(...copies.map(c => c.id));
+  _syncListOrderFromGraph();
+
+  S.sel = { kind:'node', id: copies[0]?.id ?? null };
+  redraw();
+  setStatus(`グループ「${g.label}」を複製しました（${copies.length}件）— 図の下部に配置されています`);
+  return newG;
 }
 
 function toggleNodeBadge(nid, bid) {

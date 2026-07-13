@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════
 
 /** アプリバージョン（セマンティックバージョニング）。更新時は CHANGELOG.md も更新すること。 */
-const APP_VERSION = '1.5.0';
+const APP_VERSION = '1.6.0';
 
 const C = 20;
 
@@ -102,9 +102,11 @@ const G = id => S.groups.find(g => g.id === id);
 const snapV = v      => Math.round(v / C) * C;
 const snapP = (x, y) => ({ x: snapV(x), y: snapV(y) });
 
-let showNums    = true;
-let currentView = 'chart';
-let graphErrors = {};
+let showNums       = true;
+let showHiddenWire = false; // true: 起点(内製/外製)直後などの非表示配線を作成中に可視化する
+let moveOnlyMode   = false; // true: ドラッグ移動時に配線の組み替え（挿入/抜き取り）を行わず位置だけ変更する
+let currentView    = 'chart';
+let graphErrors    = {};
 
 function esc(s) {
   return String(s || '')
@@ -113,6 +115,22 @@ function esc(s) {
 
 function setStatus(t) {
   document.getElementById('stxt').textContent = t;
+}
+
+/** ステータスバーに加え、見落としにくいトースト通知を出す（接続不可などのエラー用） */
+function showToast(msg, kind) {
+  setStatus(msg);
+  const host = document.getElementById('toast-host'); if (!host) return;
+  const el = document.createElement('div');
+  el.className = `toast toast-${kind === 'warn' ? 'warn' : 'error'}`;
+  const icon = kind === 'warn' ? 'triangle-exclamation' : 'circle-exclamation';
+  el.innerHTML = `<i class="fa-solid fa-${icon}"></i><span>${esc(msg)}</span>`;
+  host.appendChild(el);
+  requestAnimationFrame(() => el.classList.add('show'));
+  setTimeout(() => {
+    el.classList.remove('show');
+    setTimeout(() => el.remove(), 200);
+  }, 2800);
 }
 
 // ── Undo / Redo ─────────────────────────────────

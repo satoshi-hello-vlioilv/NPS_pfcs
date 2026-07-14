@@ -1935,11 +1935,13 @@ function addMachine() {
     manualTime: 30, autoTime: 60, toolChangeTime: 180, toolChangeFrequency: 100,
   });
   _renderMachineTable();
+  _saveGlobalSettings();
 }
 
 function updateMachine(id, key, val) {
   const m = getMachine(id); if (!m) return;
   m[key] = val;
+  _saveGlobalSettings();
 }
 
 function deleteMachine(id) {
@@ -1955,6 +1957,8 @@ function deleteMachine(id) {
     if (g.assignedMachineId === id) g.assignedMachineId = null;
   }
   _renderMachineTable();
+  _saveGlobalSettings();
+  saveLS();
 }
 
 // ═══════════════════════════════════════════════
@@ -2009,6 +2013,7 @@ function assignMachineToGroup(gid, mid) {
     const cg = (W.charts[ci].groups || []).find(x => x.id === gid);
     if (cg) cg.assignedMachineId = mid || null;
   }
+  saveLS();
 }
 
 // ═══════════════════════════════════════════════

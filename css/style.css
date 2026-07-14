@@ -2867,37 +2867,68 @@ body:not(.lf-dnd-active) .ng[data-multisel] { cursor: move; }
 }
 
 /* ── チャート凡例（加工・検査・運搬・停滞の集計） ──────────────
-   地図の凡例のように、キャンバス左下に常設表示する */
+   地図の凡例のように常設表示。ドラッグでキャンバス内の任意の位置に移動でき、
+   表示サイズ（小/中/大）も選べる。位置・サイズは localStorage に保存される。
+   デフォルト位置はキャンバス右上（左下の操作ガイドとは明確に分離）。 */
 .chart-legend {
   position: absolute;
-  left: 14px;
-  bottom: 14px;
   z-index: 90;
-  background: rgba(255,255,255,.92);
+  background: rgba(255,255,255,.94);
   backdrop-filter: blur(3px);
   border: 1px solid var(--bdr);
   border-radius: 10px;
   box-shadow: 0 4px 14px rgba(0,0,0,.09);
-  padding: 8px 10px 7px;
-  pointer-events: none;
   user-select: none;
+  transition: box-shadow .15s;
+}
+.chart-legend.cl-dragging {
+  box-shadow: 0 10px 28px rgba(0,0,0,.18);
+  transition: none;
 }
 .cl-hdr {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 7px 5px 8px;
+  border-bottom: 1px solid var(--bdr);
+  cursor: grab;
+}
+.cl-hdr:active { cursor: grabbing; }
+.cl-grip { color: var(--mut2); font-size: 10px; flex-shrink: 0; }
+.cl-hdr-ttl {
   font-size: 9.5px; font-weight: 700; color: var(--mut);
   text-transform: uppercase; letter-spacing: .06em;
   display: flex; align-items: center; gap: 4px;
-  margin-bottom: 5px;
+  flex: 1; white-space: nowrap;
 }
-.cl-hdr i { font-size: 9px; color: var(--mut2); }
-.cl-body { display: flex; align-items: center; gap: 12px; }
+.cl-hdr-ttl i { font-size: 9px; color: var(--mut2); }
+.cl-size-btns { display: flex; gap: 1px; background: var(--surf2); border-radius: 5px; padding: 1px; }
+.cl-size-btn {
+  width: 16px; height: 15px; border-radius: 4px; border: none;
+  background: transparent; color: var(--mut2); font-size: 8.5px; font-weight: 700;
+  cursor: pointer; font-family: inherit; display: flex; align-items: center; justify-content: center;
+  transition: background .12s, color .12s;
+}
+.cl-size-btn:hover { color: var(--txt2); }
+.cl-size-btn.active { background: var(--surf); color: var(--acc); box-shadow: 0 1px 2px rgba(0,0,0,.1); }
+.cl-body { display: flex; align-items: center; gap: 12px; padding: 7px 10px 8px; }
 .cl-item { display: flex; align-items: center; gap: 5px; }
 .cl-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-.cl-lbl { font-size: 11px; font-weight: 600; color: var(--txt2); }
+.cl-lbl { font-size: 11px; font-weight: 600; color: var(--txt2); white-space: nowrap; }
 .cl-cnt {
   font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 700;
   color: var(--txt); background: var(--surf2); border-radius: 4px;
   padding: 0 5px; min-width: 16px; text-align: center;
 }
+
+/* サイズバリアント: 小 */
+.chart-legend.cl-size-s .cl-body { gap: 8px; padding: 5px 8px 6px; }
+.chart-legend.cl-size-s .cl-dot { width: 6px; height: 6px; }
+.chart-legend.cl-size-s .cl-lbl { font-size: 9.5px; }
+.chart-legend.cl-size-s .cl-cnt { font-size: 9.5px; padding: 0 4px; min-width: 13px; }
+/* サイズバリアント: 大 */
+.chart-legend.cl-size-l .cl-body { gap: 17px; padding: 11px 15px 12px; }
+.chart-legend.cl-size-l .cl-dot { width: 12px; height: 12px; }
+.chart-legend.cl-size-l .cl-lbl { font-size: 14px; }
+.chart-legend.cl-size-l .cl-cnt { font-size: 13.5px; padding: 1px 7px; min-width: 21px; }
 
 /* ── ホバー中ノード: バンド内即時ハイライト ───── */
 /* Salience (顕著性): 対象が何か即座にわかる */

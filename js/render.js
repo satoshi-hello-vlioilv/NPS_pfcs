@@ -474,6 +474,8 @@ function redraw() {
 }
 
 // ── チャート凡例（加工・検査・運搬・停滞の集計）─────────────
+// ドラッグでキャンバス内の任意位置へ移動でき、表示サイズ（小/中/大）も選べる。
+// 位置・サイズは localStorage に保存し、操作ガイド（左下固定）とは独立して扱う。
 const _LEGEND_CATS = [
   { l:'加工', k:['kako'] },
   { l:'検査', k:['kensa_q','kensa_n','kensa_qn'] },
@@ -481,10 +483,99 @@ const _LEGEND_CATS = [
   { l:'停滞', k:['tt_s','tt_k','tt_p','tt_l'] },
 ];
 
+const LEGEND_PREF_KEY = 'nps_legend_pref';
+let legendSize = 'm'; // 's' | 'm' | 'l'
+let _legendPos = null; // { x, y } — #cwrap 基準の左上座標。null = デフォルト位置未確定
+
+function _loadLegendPref() {
+  try {
+    const raw = localStorage.getItem(LEGEND_PREF_KEY);
+    if (raw) {
+      const d = JSON.parse(raw);
+      if (d.size === 's' || d.size === 'm' || d.size === 'l') legendSize = d.size;
+      if (typeof d.x === 'number' && typeof d.y === 'number') _legendPos = { x: d.x, y: d.y };
+    }
+  } catch (_) {}
+}
+
+function _saveLegendPref() {
+  try {
+    localStorage.setItem(LEGEND_PREF_KEY, JSON.stringify({ size: legendSize, x: _legendPos?.x, y: _legendPos?.y }));
+  } catch (_) {}
+}
+
+/** 凡例が #cwrap の表示範囲内に収まるよう座標をクランプする */
+function _clampLegendPos(x, y) {
+  const wrap = document.getElementById('cwrap');
+  const el   = document.getElementById('chart-legend');
+  if (!wrap || !el) return { x, y };
+  const ww = wrap.clientWidth, wh = wrap.clientHeight;
+  const ew = el.offsetWidth  || 160, eh = el.offsetHeight || 40;
+  return {
+    x: Math.max(4, Math.min(x, ww - ew - 4)),
+    y: Math.max(4, Math.min(y, wh - eh - 4)),
+  };
+}
+
+function _applyLegendPos() {
+  const el = document.getElementById('chart-legend');
+  if (!el) return;
+  if (!_legendPos) {
+    // デフォルト位置: キャンバス右上（左下の操作ガイドとは明確に分離）
+    const wrap = document.getElementById('cwrap');
+    const ew = el.offsetWidth || 200;
+    _legendPos = { x: (wrap ? wrap.clientWidth : 800) - ew - 14, y: 14 };
+  }
+  const p = _clampLegendPos(_legendPos.x, _legendPos.y);
+  el.style.left = p.x + 'px';
+  el.style.top  = p.y + 'px';
+}
+
+/** 凡例の表示サイズを切り替える（S/M/L） */
+function setLegendSize(size) {
+  if (!['s','m','l'].includes(size)) return;
+  legendSize = size;
+  _saveLegendPref();
+  updateChartLegend();
+}
+
+/**
+ * 凡例ヘッダーをつかんでドラッグし、#cwrap 内の任意位置へ移動する。
+ * updateChartLegend() は毎回 innerHTML を再構築するため、ヘッダー要素自体に
+ * リスナーを付けると再描画のたびに失われる。外側コンテナ(el、再生成されない)に
+ * 一度だけイベント委譲で登録する。
+ */
+function _initLegendDrag(el) {
+  el.addEventListener('mousedown', ev => {
+    const hdr = ev.target.closest('.cl-hdr');
+    if (!hdr || ev.button !== 0 || ev.target.closest('.cl-size-btn')) return;
+    ev.preventDefault();
+    const startX = ev.clientX, startY = ev.clientY;
+    const baseX  = el.offsetLeft, baseY = el.offsetTop;
+    el.classList.add('cl-dragging');
+    let moved = false;
+    const onMove = mv => {
+      moved = true;
+      const p = _clampLegendPos(baseX + (mv.clientX - startX), baseY + (mv.clientY - startY));
+      el.style.left = p.x + 'px';
+      el.style.top  = p.y + 'px';
+      _legendPos = p;
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      el.classList.remove('cl-dragging');
+      if (moved) _saveLegendPref();
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  });
+}
+
 function updateChartLegend() {
   const el = document.getElementById('chart-legend');
   if (!el) return;
-  if (!S.nodes.length) { el.innerHTML = ''; return; }
+  if (!S.nodes.length) { el.innerHTML = ''; el.className = 'chart-legend'; return; }
 
   const cnt = {};
   for (const n of S.nodes) cnt[n.type] = (cnt[n.type] || 0) + 1;
@@ -499,8 +590,25 @@ function updateChartLegend() {
     </div>`;
   }).join('');
 
-  el.innerHTML = `<div class="cl-hdr"><i class="fa-solid fa-list-check"></i> 凡例</div>
+  const sizeBtns = ['s','m','l'].map(sz =>
+    `<button class="cl-size-btn${legendSize === sz ? ' active' : ''}" onclick="setLegendSize('${sz}')"
+      title="${{s:'小',m:'中',l:'大'}[sz]}サイズ">${sz.toUpperCase()}</button>`
+  ).join('');
+
+  el.className = `chart-legend cl-size-${legendSize}`;
+  el.innerHTML = `
+    <div class="cl-hdr" title="ドラッグして移動">
+      <i class="fa-solid fa-grip-vertical cl-grip"></i>
+      <span class="cl-hdr-ttl"><i class="fa-solid fa-list-check"></i> 凡例</span>
+      <div class="cl-size-btns">${sizeBtns}</div>
+    </div>
     <div class="cl-body">${items}</div>`;
+
+  if (!el.dataset.dragBound) {
+    _initLegendDrag(el);
+    el.dataset.dragBound = '1';
+  }
+  _applyLegendPos();
 }
 
 // ── プレビュー SVG（モーダル用）─────────────────

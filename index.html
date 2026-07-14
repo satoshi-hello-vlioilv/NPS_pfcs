@@ -25,12 +25,14 @@
       <button class="imp-mode-btn" data-mode="after" onclick="setImprovementMode('after')">改善後</button>
     </div>
     <div class="tsep"></div>
-    <button class="tbtn" onclick="trigLoad()" title="JSONファイルを読み込む">
-      <i class="fa-solid fa-folder-open"></i> 読込
+    <button class="tbtn" onclick="trigLoad()"
+      title="JSONファイルから工程図を読み込みます。現在の作業内容は上書きされます（既存データがある場合は確認が入ります）。">
+      <i class="fa-solid fa-file-import"></i> JSON読込
     </button>
     <input type="file" id="fload" accept=".json" style="display:none" onchange="loadJ(event)">
-    <button class="tbtn" onclick="saveJ()" title="JSONファイルに保存">
-      <i class="fa-solid fa-floppy-disk"></i> 保存
+    <button class="tbtn" onclick="saveJ()"
+      title="現在の作業内容をJSONファイルとしてダウンロードします（バックアップ・共有用）。&#10;作業内容はこの操作をしなくてもブラウザ内に自動保存されています。">
+      <i class="fa-solid fa-file-export"></i> JSON保存
     </button>
     <button class="tbtn" onclick="window.print()" title="印刷">
       <i class="fa-solid fa-print"></i> 印刷

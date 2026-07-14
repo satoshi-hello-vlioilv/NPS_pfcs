@@ -1115,6 +1115,13 @@ function trigLoad() { document.getElementById('fload').click(); }
 
 function loadJ(ev) {
   const f = ev.target.files[0]; if (!f) return;
+  // 既存の作業内容がある場合は上書き確認（誤って別ファイルを選んだ場合のデータ消失を防ぐ）
+  const hasExisting = W.charts.some(c => (c.nodes?.length || 0) > 0 ||
+    Object.values(c.impVariants || {}).some(v => (v?.nodes?.length || 0) > 0));
+  if (hasExisting && !confirm('現在の作業内容を、読み込むJSONファイルの内容で置き換えます。\nこの操作は元に戻せません。続けますか？')) {
+    ev.target.value = '';
+    return;
+  }
   const r = new FileReader();
   r.onload = e => {
     try {
@@ -1177,6 +1184,8 @@ function init() {
   buildChartPalBar();
   initEvents();
   initSidResizer();
+  _loadLegendPref();
+  window.addEventListener('resize', () => _applyLegendPos());
   document.getElementById('btn-nums').classList.toggle('on', showNums);
 
   const wr = document.getElementById('cwrap').getBoundingClientRect();

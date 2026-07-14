@@ -361,8 +361,9 @@ function _nodeDecoSVG(type, label, unit, unitQty, badges, comment, r, tx,
  * 所属グループ名バッジ（showGroupBadge ON時のみ）。
  * 同一グループに属し配線でつながっている連続したノード群（ラン）ごとに1つだけ表示する
  * （ノード1つずつに同じラベルを繰り返すと視認性が落ちるため）。
- * 工程名ラベル・状態バッジ（重要工程等）は node.x を中心に上方向へ積み上がるため、
- * ラン内で最も積み上げの多いノードの最上部よりさらに上に配置し、衝突を避ける。
+ * 「対象記号（アイコン）を柔らかい角丸の四角で囲む枠」＋「枠の上端にまたがる小さな
+ * グループ名バッジ」の組み合わせで表示する。枠はアイコン本体だけを包み、工程名ラベルや
+ * 状態バッジ（自由に位置調整できるため範囲が不定）とは重ならない。
  */
 function _computeGroupBadgeRuns() {
   const visited = new Set();
@@ -387,46 +388,65 @@ function _computeGroupBadgeRuns() {
   return runs;
 }
 
-function _groupBadgeRunSVG(run) {
-  const g = G(run.groupId); if (!g) return '';
-  const label = g.label || 'グループ';
-  const pw = Math.min(130, Math.ceil(label.length * 6.4) + 22);
-
-  let maxStatusCount = 0, minX = Infinity, maxX = -Infinity, minY = Infinity;
+/**
+ * ラン内ノードの表示全体（工程名ラベル・状態バッジの積み上げ〜アイコン本体）を包む
+ * バウンディングボックスを返す。上端をノードごとの積み上げ最上部に合わせて計算するため、
+ * 枠の上端は常に工程名ラベルよりさらに上に来る（枠上端に載せるバッジがラベルと衝突しない）。
+ */
+function _groupRunFrameBox(run) {
+  let minX = Infinity, maxX = -Infinity, minTop = Infinity, maxBottom = -Infinity;
   for (const n of run.nodes) {
-    const statusCount = (n.badges || []).filter(bid => STATUS_BADGE_IDS.has(bid)).length;
-    if (statusCount > maxStatusCount) maxStatusCount = statusCount;
     const r  = SYMS[n.type].r;
     const cx = n.x + (n.type === 'unpan' ? r : 0);
     if (cx - r < minX) minX = cx - r;
     if (cx + r > maxX) maxX = cx + r;
-    if (n.y < minY) minY = n.y;
+    const statusCount = (n.badges || []).filter(bid => STATUS_BADGE_IDS.has(bid)).length;
+    const top    = n.y + LABEL_BOX_TOP - statusCount * 16 - 2; // _badgeLabelSVG の statusStartY と同一式
+    const bottom = n.y + r;
+    if (top < minTop) minTop = top;
+    if (bottom > maxBottom) maxBottom = bottom;
   }
-  const stackTop = LABEL_BOX_TOP - maxStatusCount * 16 - 2; // _badgeLabelSVG の statusStartY と同一式
-  const by   = minY + stackTop - 14 - 3;
-  const midX = (minX + maxX) / 2;
-  const bx   = midX - pw / 2;
+  const padX = 10, padTop = 8, padBottom = 10;
+  return {
+    x: minX - padX, y: minTop - padTop,
+    w: (maxX - minX) + padX * 2,
+    h: (maxBottom - minTop) + padTop + padBottom,
+  };
+}
 
-  // ラン範囲がラベル幅より広い場合、範囲を示す横線を添える
-  const bar = (maxX - minX > pw)
-    ? `<line x1="${minX}" y1="${by + 17}" x2="${maxX}" y2="${by + 17}"
-        stroke="${g.color}" stroke-width="2" stroke-linecap="round" opacity=".5"/>`
-    : '';
+/** ラン全体（工程名ラベル〜アイコン）を柔らかい角丸の四角で囲う背景枠。ノードより先に描画する。 */
+function _groupFrameSVG(run) {
+  const g = G(run.groupId); if (!g) return '';
+  const box = _groupRunFrameBox(run);
+  return `<rect x="${box.x}" y="${box.y}" width="${box.w}" height="${box.h}" rx="14"
+    fill="${g.color}14" stroke="${g.color}" stroke-width="1.3" stroke-opacity=".6"
+    pointer-events="none"/>`;
+}
 
-  return `<g pointer-events="none">
-    ${bar}
-    <g transform="translate(${bx},${by})">
-      <rect x="0" y="0" width="${pw}" height="14" rx="7" fill="${g.color}22" stroke="${g.color}" stroke-width="1"/>
-      <circle cx="9" cy="7" r="3" fill="${g.color}"/>
-      <text x="16" y="10.3" font-family="'Noto Sans JP',sans-serif" font-size="8.5" font-weight="700"
-        fill="${g.color}">${esc(label)}</text>
-    </g>
+/** 枠の上端にまたがる、グループ名の小さなバッジ（ドット＋テキスト）。ノードより後に描画する。 */
+function _groupBadgePillSVG(run) {
+  const g = G(run.groupId); if (!g) return '';
+  const box = _groupRunFrameBox(run);
+  const label = g.label || 'グループ';
+  const pw = Math.min(130, Math.ceil(label.length * 6.4) + 22);
+  const ph = 14;
+  const bx = box.x + box.w / 2 - pw / 2;
+  const by = box.y - ph / 2; // 枠の上端線にまたがるように配置
+
+  return `<g pointer-events="none" transform="translate(${bx},${by})">
+    <rect x="0" y="0" width="${pw}" height="${ph}" rx="7" fill="${g.color}22" stroke="${g.color}" stroke-width="1"/>
+    <circle cx="9" cy="7" r="3" fill="${g.color}"/>
+    <text x="16" y="10.3" font-family="'Noto Sans JP',sans-serif" font-size="8.5" font-weight="700"
+      fill="${g.color}">${esc(label)}</text>
   </g>`;
 }
 
 function renderNodes() {
   const nums = showNums ? computeNums() : {};
+  const badgeRuns = showGroupBadge ? _computeGroupBadgeRuns() : [];
   let h = '';
+  // グループ枠はアイコンより先に描画し、背景として記号を柔らかく囲う
+  for (const run of badgeRuns) h += _groupFrameSVG(run);
   for (const node of S.nodes) {
     const sd  = SYMS[node.type], r = sd.r;
     const sel = S.sel?.kind === 'node' && S.sel.id === node.id;
@@ -490,9 +510,8 @@ function renderNodes() {
 
     h += '</g>';
   }
-  if (showGroupBadge) {
-    for (const run of _computeGroupBadgeRuns()) h += _groupBadgeRunSVG(run);
-  }
+  // グループ名バッジは枠の上端にまたがる形で最後(最前面)に描画する
+  for (const run of badgeRuns) h += _groupBadgePillSVG(run);
   document.getElementById('NL').innerHTML = h;
   bindNodeEv();
 }

@@ -4247,8 +4247,19 @@ function _buildRouteTableHTML(rows, columns, headerMode, groupRows) {
   const colCount  = columns.length + 1;
   let html = `<table class="rm-table${modeClass}"><thead><tr>`;
   html += `<th class="rm-th-chart"><i class="fa-solid fa-diagram-project"></i> 工程図名</th>`;
+
+  // 縦書きモードでは、ブラウザ・フォントによる自動計算に頼らず、最長の工程名の
+  // 文字数から必要な高さを明示的に算出してヘッダーセルへ適用する。自動計算だけに
+  // 頼ると環境によって縦書きテキストの高さが実際の文字数どおりに確保されず、
+  // 工程名が途中で見切れることがあるため。
+  let vertHdrStyle = '';
+  if (headerMode === 'vertical' && columns.length) {
+    const maxLen = Math.max(...columns.map(c => c.length));
+    vertHdrStyle = ` style="height:${maxLen * 13 + 16}px"`;
+  }
+
   columns.forEach(col => {
-    html += `<th class="rm-th-process" title="${esc(col)}"><span class="rm-col-name">${esc(col)}</span></th>`;
+    html += `<th class="rm-th-process"${vertHdrStyle} title="${esc(col)}"><span class="rm-col-name">${esc(col)}</span></th>`;
   });
   html += '</tr></thead><tbody>';
 

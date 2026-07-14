@@ -5025,15 +5025,20 @@ body:not(.lf-dnd-active) .ng[data-multisel] { cursor: move; }
   width: 26px;
   min-width: 26px;
   max-width: 26px;
+  height: 100px; /* JS側で文字数に応じて inline style により上書きされる（フォールバック値） */
   vertical-align: bottom;
+  box-sizing: border-box;
 }
 .rm-table.rm-hdr-vertical .rm-col-name {
-  /* 縦書き: 上→下の正しい方向 */
+  /* 縦書き: 上→下の正しい方向。
+     以前は max-height:84px + overflow:hidden で長い工程名が見切れて（途中で切れて）
+     いたため高さ上限を撤廃。さらに、縦書きテキストの自動計算される高さは環境によって
+     不安定なことがあるため、親th（JS側で文字数から算出した高さを明示指定）いっぱいに
+     広がるよう height:100% にして、実際の表示に必要な領域を確実に確保する。 */
   writing-mode: vertical-lr;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: clip;
-  max-height: 84px;
+  overflow: visible;
+  height: 100%;
   font-size: 11px;
   font-weight: 600;
   display: block;

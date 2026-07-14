@@ -406,7 +406,7 @@ function _groupRunFrameBox(run) {
     if (top < minTop) minTop = top;
     if (bottom > maxBottom) maxBottom = bottom;
   }
-  const padX = 10, padTop = 8, padBottom = 10;
+  const padX = 20, padTop = 14, padBottom = 18;
   return {
     x: minX - padX, y: minTop - padTop,
     w: (maxX - minX) + padX * 2,
@@ -423,20 +423,29 @@ function _groupFrameSVG(run) {
     pointer-events="none"/>`;
 }
 
-/** 枠の上端にまたがる、グループ名の小さなバッジ（ドット＋テキスト）。ノードより後に描画する。 */
+/**
+ * 枠の上端にまたがる、グループ名バッジ（ドット＋テキスト）。ノードより後に描画する。
+ * 幅は「文字が収まる最小幅」を下限に、枠の幅まで広げられる場合は広げる
+ * （枠に対して不自然に細い帯にならないようにするため）。中身は常に中央寄せ。
+ */
 function _groupBadgePillSVG(run) {
   const g = G(run.groupId); if (!g) return '';
   const box = _groupRunFrameBox(run);
   const label = g.label || 'グループ';
-  const pw = Math.min(130, Math.ceil(label.length * 6.4) + 22);
+  const textW = Math.ceil(label.length * 6.4);
+  const contentW = textW + 20; // ドット＋余白込みの中身の幅
+  const minPw = contentW + 22;
+  const pw = Math.max(minPw, box.w);
   const ph = 14;
   const bx = box.x + box.w / 2 - pw / 2;
   const by = box.y - ph / 2; // 枠の上端線にまたがるように配置
+  const dotCx = pw / 2 - contentW / 2 + 3;
+  const textX = pw / 2 - contentW / 2 + 14;
 
   return `<g pointer-events="none" transform="translate(${bx},${by})">
     <rect x="0" y="0" width="${pw}" height="${ph}" rx="7" fill="${g.color}22" stroke="${g.color}" stroke-width="1"/>
-    <circle cx="9" cy="7" r="3" fill="${g.color}"/>
-    <text x="16" y="10.3" font-family="'Noto Sans JP',sans-serif" font-size="8.5" font-weight="700"
+    <circle cx="${dotCx}" cy="7" r="3" fill="${g.color}"/>
+    <text x="${textX}" y="10.3" font-family="'Noto Sans JP',sans-serif" font-size="8.5" font-weight="700"
       fill="${g.color}">${esc(label)}</text>
   </g>`;
 }

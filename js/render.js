@@ -359,26 +359,68 @@ function _nodeDecoSVG(type, label, unit, unitQty, badges, comment, r, tx,
 
 /**
  * 所属グループ名バッジ（showGroupBadge ON時のみ）。
+ * 同一グループに属し配線でつながっている連続したノード群（ラン）ごとに1つだけ表示する
+ * （ノード1つずつに同じラベルを繰り返すと視認性が落ちるため）。
  * 工程名ラベル・状態バッジ（重要工程等）は node.x を中心に上方向へ積み上がるため、
- * その最上部よりさらに上に、既存の積み上げ計算(_badgeLabelSVG と同一式)を用いて配置する。
- * こうすることでバッジ数に関わらず衝突しない。
+ * ラン内で最も積み上げの多いノードの最上部よりさらに上に配置し、衝突を避ける。
  */
-function _groupBadgeSVG(node, r, tx) {
-  if (!showGroupBadge || !node.groupId) return '';
-  const g = G(node.groupId); if (!g) return '';
+function _computeGroupBadgeRuns() {
+  const visited = new Set();
+  const runs = [];
+  for (const node of S.nodes) {
+    if (!node.groupId || visited.has(node.id)) continue;
+    const stack = [node.id];
+    const ids = [];
+    visited.add(node.id);
+    while (stack.length) {
+      const id = stack.pop();
+      ids.push(id);
+      for (const e of S.edges) {
+        const nbId = e.from === id ? e.to : (e.to === id ? e.from : null);
+        if (nbId == null || visited.has(nbId)) continue;
+        const nb = N(nbId);
+        if (nb && nb.groupId === node.groupId) { visited.add(nbId); stack.push(nbId); }
+      }
+    }
+    runs.push({ groupId: node.groupId, nodes: ids.map(id => N(id)).filter(Boolean) });
+  }
+  return runs;
+}
+
+function _groupBadgeRunSVG(run) {
+  const g = G(run.groupId); if (!g) return '';
   const label = g.label || 'グループ';
   const pw = Math.min(130, Math.ceil(label.length * 6.4) + 22);
 
-  const statusCount = (node.badges || []).filter(bid => STATUS_BADGE_IDS.has(bid)).length;
-  const stackTop = LABEL_BOX_TOP - statusCount * 16 - 2; // _badgeLabelSVG の statusStartY と同一式
-  const by = stackTop - 14 - 3;
-  const bx = tx - pw / 2;
+  let maxStatusCount = 0, minX = Infinity, maxX = -Infinity, minY = Infinity;
+  for (const n of run.nodes) {
+    const statusCount = (n.badges || []).filter(bid => STATUS_BADGE_IDS.has(bid)).length;
+    if (statusCount > maxStatusCount) maxStatusCount = statusCount;
+    const r  = SYMS[n.type].r;
+    const cx = n.x + (n.type === 'unpan' ? r : 0);
+    if (cx - r < minX) minX = cx - r;
+    if (cx + r > maxX) maxX = cx + r;
+    if (n.y < minY) minY = n.y;
+  }
+  const stackTop = LABEL_BOX_TOP - maxStatusCount * 16 - 2; // _badgeLabelSVG の statusStartY と同一式
+  const by   = minY + stackTop - 14 - 3;
+  const midX = (minX + maxX) / 2;
+  const bx   = midX - pw / 2;
 
-  return `<g transform="translate(${bx},${by})" pointer-events="none">
-    <rect x="0" y="0" width="${pw}" height="14" rx="7" fill="${g.color}22" stroke="${g.color}" stroke-width="1"/>
-    <circle cx="9" cy="7" r="3" fill="${g.color}"/>
-    <text x="16" y="10.3" font-family="'Noto Sans JP',sans-serif" font-size="8.5" font-weight="700"
-      fill="${g.color}">${esc(label)}</text>
+  // ラン範囲がラベル幅より広い場合、範囲を示す横線を添える
+  const bar = (maxX - minX > pw)
+    ? `<line x1="${minX}" y1="${by + 17}" x2="${maxX}" y2="${by + 17}"
+        stroke="${g.color}" stroke-width="2" stroke-linecap="round" opacity=".5"/>`
+    : '';
+
+  return `<g pointer-events="none">
+    ${bar}
+    <g transform="translate(${bx},${by})">
+      <rect x="0" y="0" width="${pw}" height="14" rx="7" fill="${g.color}22" stroke="${g.color}" stroke-width="1"/>
+      <circle cx="9" cy="7" r="3" fill="${g.color}"/>
+      <text x="16" y="10.3" font-family="'Noto Sans JP',sans-serif" font-size="8.5" font-weight="700"
+        fill="${g.color}">${esc(label)}</text>
+    </g>
   </g>`;
 }
 
@@ -401,7 +443,6 @@ function renderNodes() {
     if (inMulti) h += `<circle cx="${selCx}" r="${r+9}" fill="rgba(37,99,235,.05)" stroke="var(--acc)" stroke-width="1.5" stroke-dasharray="4,3"/>`;
 
     h += drawSym(node.type, 0, 0, showNums ? num : null);
-    h += _groupBadgeSVG(node, r, tx);
 
     h += _nodeDecoSVG(
       node.type, node.label || '', node.unit || '', node.unitQty || '',
@@ -448,6 +489,9 @@ function renderNodes() {
     }
 
     h += '</g>';
+  }
+  if (showGroupBadge) {
+    for (const run of _computeGroupBadgeRuns()) h += _groupBadgeRunSVG(run);
   }
   document.getElementById('NL').innerHTML = h;
   bindNodeEv();

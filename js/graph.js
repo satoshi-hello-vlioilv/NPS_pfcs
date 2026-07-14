@@ -246,6 +246,46 @@ function _getGroupedOrder() {
 // ── レイアウト共通計算 ──────────────────────────
 
 /**
+ * X方向に重ならない行同士は同じ「トラック」（=同じ高さ）へまとめて詰める。
+ * rows は優先順（背骨に近い側から詰めたい順）に並んでいる前提。
+ * 各行のX範囲は、ノードの実寸に加えグループバッジ（ラン中央に表示される
+ * 幅最大130pxのラベル）がはみ出す分も考慮した余白を持たせて衝突判定する。
+ *
+ * @param {Array<{groupId:string, nodes:object[]}>} rows
+ * @param {Object<string,number>} nodeXMap
+ * @returns {Map<string, number>} groupId → トラック番号（0=最も内側/背骨寄り）
+ */
+function _packRowsIntoTracks(rows, nodeXMap) {
+  const BADGE_HALF = 70;   // グループバッジの想定半幅
+  const GAP        = 24;   // トラック内・行間の最低余白
+  const tracks = []; // tracks[t] = [[minX,maxX], ...] そのトラックが占有中の区間群
+  const trackOf = new Map();
+
+  for (const row of rows) {
+    if (!row.nodes.length) continue;
+    let nodeMinX = Infinity, nodeMaxX = -Infinity;
+    for (const n of row.nodes) {
+      if (nodeXMap[n.id] == null) continue;
+      const r  = SYMS[n.type].r;
+      const x0 = n.type === 'unpan' ? nodeXMap[n.id] : nodeXMap[n.id] - r;
+      const x1 = n.type === 'unpan' ? nodeXMap[n.id] + 2 * r : nodeXMap[n.id] + r;
+      if (x0 < nodeMinX) nodeMinX = x0;
+      if (x1 > nodeMaxX) nodeMaxX = x1;
+    }
+    if (nodeMinX === Infinity) continue;
+    const midX = (nodeMinX + nodeMaxX) / 2;
+    const minX = Math.min(nodeMinX, midX - BADGE_HALF) - GAP;
+    const maxX = Math.max(nodeMaxX, midX + BADGE_HALF) + GAP;
+
+    let t = tracks.findIndex(occ => !occ.some(([a, b]) => minX < b && maxX > a));
+    if (t === -1) { t = tracks.length; tracks.push([]); }
+    tracks[t].push([minX, maxX]);
+    trackOf.set(row.groupId, t);
+  }
+  return trackOf;
+}
+
+/**
  * グループ行の縦方向の並び順を、背骨グループを中心とした構造で決定する。
  * 従来は S.groups の登録順（配置とは無関係な配列順）で単純に上から積んでいたため、
  * データ量や合流構造を無視した不規則な配置になっていた。
@@ -259,16 +299,24 @@ function _getGroupedOrder() {
  *   3. 背骨と無関係な独立グループ（合流のないグループ）はデータ量の多い順に
  *      最下段へ積む（背骨中心の構造を崩さないよう分離して配置）
  *   4. グループなし行は常に最下段
+ *   5. 上記で「上側」「下側」「独立」に振り分けたグループ同士のうち、X方向に重ならない
+ *      （＝枝葉同士が横で衝突しない）ものは _packRowsIntoTracks で同じ高さへ詰め、
+ *      表示全体の縦幅をできるだけコンパクトにする
  *
  * @param {Array<{groupId:string|null, group:object|null, nodes:object[]}>} grouped
- * @returns {{ordered: object[], bbIndex: number}} ordered: 上から下への行配列、bbIndex: 背骨行のインデックス
+ * @param {Object<string,number>} nodeXMap  各ノードのX座標（パッキング判定に使用）
+ * @returns {Map<string|null, number>} groupId → 行オフセット（0=背骨、負=上側、正=下側）
  */
-function _orderGroupsForLayout(grouped) {
+function _orderGroupsForLayout(grouped, nodeXMap) {
   const byId = new Map(grouped.map(row => [row.groupId, row]));
   const ungroupedRow = grouped.find(row => row.groupId == null && row.nodes.length);
   const realRows = grouped.filter(row => row.groupId != null && row.nodes.length);
 
-  if (!realRows.length) return { ordered: ungroupedRow ? [ungroupedRow] : [], bbIndex: -1 };
+  if (!realRows.length) {
+    const offsets = new Map();
+    if (ungroupedRow) offsets.set(null, 0);
+    return offsets;
+  }
 
   const bbId = getBackboneGroupId();
   const bbRow = bbId ? byId.get(bbId) : null;
@@ -324,14 +372,17 @@ function _orderGroupsForLayout(grouped) {
     else                  { below.push(br); belowW += br.weight; }
   }
 
-  // 背骨自体が無い場合（グループ0件など）は全グループをデータ量の多い順に単純に積む
+  // 背骨自体が無い場合（グループ0件など）は、X方向に重ならないものを同じ高さへ詰めて積む
   if (!bbRow) {
     const rest = realRows.filter(r => !visited.has(r.groupId))
       .sort((a, b) => b.nodes.length - a.nodes.length);
     for (const r of rest) collectBranch(r.groupId); // visited 管理のためだけに通す
-    const ordered = rest.slice();
-    if (ungroupedRow) ordered.push(ungroupedRow);
-    return { ordered, bbIndex: -1 };
+    const trackOf     = _packRowsIntoTracks(rest, nodeXMap);
+    const trackCount  = trackOf.size ? Math.max(...trackOf.values()) + 1 : 0;
+    const offsets = new Map();
+    for (const [gid, t] of trackOf) offsets.set(gid, t);
+    if (ungroupedRow) offsets.set(null, trackCount);
+    return offsets;
   }
 
   // 背骨と合流関係にない独立グループ（別ライン）はデータ量の多い順に最下段へ
@@ -340,15 +391,21 @@ function _orderGroupsForLayout(grouped) {
     .sort((a, b) => b.nodes.length - a.nodes.length);
   for (const r of independents) visited.add(r.groupId);
 
-  const ordered = [
-    ...above.flatMap(b => b.rows),
-    ...bbRows,
-    ...below.flatMap(b => b.rows),
-    ...independents,
-  ];
-  if (ungroupedRow) ordered.push(ungroupedRow);
+  // 上側・下側・独立の各カテゴリ内で、X方向に重ならない行同士を同じ高さへ詰める
+  const aboveTrackOf = _packRowsIntoTracks(above.flatMap(b => b.rows), nodeXMap);
+  const belowTrackOf = _packRowsIntoTracks(below.flatMap(b => b.rows), nodeXMap);
+  const indepTrackOf = _packRowsIntoTracks(independents, nodeXMap);
+  const belowTrackCount = belowTrackOf.size ? Math.max(...belowTrackOf.values()) + 1 : 0;
+  const indepTrackCount = indepTrackOf.size ? Math.max(...indepTrackOf.values()) + 1 : 0;
 
-  return { ordered, bbIndex: above.reduce((s, b) => s + b.rows.length, 0) };
+  const offsets = new Map();
+  offsets.set(bbRow.groupId, 0);
+  for (const [gid, t] of aboveTrackOf) offsets.set(gid, -(t + 1));
+  for (const [gid, t] of belowTrackOf) offsets.set(gid, t + 1);
+  for (const [gid, t] of indepTrackOf) offsets.set(gid, belowTrackCount + t + 1);
+  if (ungroupedRow) offsets.set(null, belowTrackCount + indepTrackCount + 1);
+
+  return offsets;
 }
 
 /**
@@ -428,12 +485,12 @@ function _layoutRows(grouped, _NODE_GAP_UNUSED, LEFT_MARGIN) {
 
   // ── Step3: 背骨中心の並び順で X/Y を各ノードに書き込む ─────────────
   // 背骨グループを基準行(オフセット0)とし、合流構造・データ量を考慮して
-  // バランスよく振り分けた行順に沿って上下へ配置する（_orderGroupsForLayout）。
-  const { ordered, bbIndex } = _orderGroupsForLayout(grouped);
-  for (let i = 0; i < ordered.length; i++) {
-    const { nodes } = ordered[i];
+  // バランスよく振り分け、さらにX方向に重ならない枝葉同士は同じ高さへ詰めて
+  // コンパクトに配置する（_orderGroupsForLayout）。
+  const rowOffsetById = _orderGroupsForLayout(grouped, nodeXMap);
+  for (const { groupId, nodes } of grouped) {
     if (!nodes.length) continue;
-    const rowOffset = bbIndex >= 0 ? (i - bbIndex) : i;
+    const rowOffset = rowOffsetById.get(groupId) ?? 0;
     const yi = rowOffset * C * 14;
     for (const node of nodes) {
       node.x = nodeXMap[node.id] ?? node.x;

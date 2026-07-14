@@ -4086,7 +4086,12 @@ function deleteChart(cid) {
 function openChartBackbonePop(cid, btn) {
   _closeFloatingPop('_chart_bb_pop');
   const c = W.charts.find(x => x.id === cid); if (!c) return;
-  const groups = (cid === W.activeId) ? S.groups : (c.groups ||[]);
+  // getChartData() は改善前/改善後バリアントを考慮した「現在モードで実際に使われる」
+  // groups / backboneGroupId を返す。ここを c.groups / c.backboneGroupId に直接アクセス
+  // すると、バリアントを持つチャートで古い（別モードの）値を参照してしまい、
+  // 「自動」を選んでも実際の表示に反映されない不具合につながる。
+  const cd     = (cid === W.activeId) ? { groups: S.groups, backboneGroupId: S.backboneGroupId } : getChartData(c);
+  const groups = cd.groups || [];
 
   const pop = document.createElement('div');
   pop.id = '_chart_bb_pop'; pop.className = 'fl-pop group-pop';
@@ -4095,7 +4100,7 @@ function openChartBackbonePop(cid, btn) {
     { id: null, label: '自動（一番長いライン）', color: '#94a3b8' },
     ...groups.map(g => ({ id: g.id, label: g.label, color: g.color })),
   ];
-  const cur = c.backboneGroupId;
+  const cur = cd.backboneGroupId;
 
   pop.innerHTML = `
     <div class="fl-pop-hdr"><i class="fa-solid fa-bone"></i> 背骨グループを選択</div>

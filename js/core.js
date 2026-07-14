@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════
 
 /** アプリバージョン（セマンティックバージョニング）。更新時は CHANGELOG.md も更新すること。 */
-const APP_VERSION = '1.11.0';
+const APP_VERSION = '1.11.1';
 
 const C = 20;
 
@@ -356,11 +356,23 @@ function _updateActiveChartDisplay() {
 /**
  * 工程図の背骨グループを設定する。
  * gid = null の場合は自動（一番長いライン）に戻す。
+ *
+ * 改善前/改善後バリアント(impVariants)を持つチャートは、getChartData() が
+ * 「現在モードのバリアントの backboneGroupId」を優先して読むため、そちらにも
+ * 書き込まないと非アクティブチャートで設定した内容が反映されない
+ * （かつては c.backboneGroupId というトップレベルの互換フィールドにしか
+ * 書き込んでおらず、バリアント側の値が古いまま残って「自動」に戻せなくなる
+ * 不具合があった）。
  */
 function setChartBackbone(cid, gid) {
   const c = W.charts.find(x => x.id === cid); if (!c) return;
-  c.backboneGroupId = gid || null;
-  if (cid === W.activeId) S.backboneGroupId = gid || null;
+  const bid = gid || null;
+  if (c.impVariants) {
+    if (!c.impVariants[improvementMode]) c.impVariants[improvementMode] = {};
+    c.impVariants[improvementMode].backboneGroupId = bid;
+  }
+  c.backboneGroupId = bid; // トップレベル（バリアントなしチャート・互換フォールバック用）
+  if (cid === W.activeId) S.backboneGroupId = bid;
   saveLS();
   if (currentView === 'list')     { _updateBackboneHint(); updateListPanel(); }
   if (currentView === 'routemap') updateRouteMap();

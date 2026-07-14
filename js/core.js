@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════
 
 /** アプリバージョン（セマンティックバージョニング）。更新時は CHANGELOG.md も更新すること。 */
-const APP_VERSION = '1.12.3';
+const APP_VERSION = '1.13.0';
 
 const C = 20;
 
@@ -495,8 +495,10 @@ function _mergeOrderedSequences(sequences) {
  *
  * allGroups=false（デフォルト）: computeRouteMap と同一の結果を1テーブルとして返す。
  * allGroups=true: 各チャートの全選択グループを(chartId×groupId)行として処理し、
- *   工程名セットが1つでも共通するグループを同じテーブルに、
- *   全く共通しないグループは別テーブルとして縦方向に分割する（Union-Find法）。
+ *   背骨グループどうしは工程名セットが1つでも共通すれば同じテーブルへ統合する
+ *   （異なる工程図の背骨ラインを比較できるように）。枝葉グループ（サブライン・部品）は
+ *   背骨や他の枝葉グループとは絶対に統合せず、常にグループごとの単独テーブルとして
+ *   完全に分離して表示する（Union-Find法、統合対象を背骨どうしのペアに限定）。
  *
  * @param {string[]} chartIds
  * @param {Map<string,Set<string>>} groupSel  - chartId → Set<groupId>
@@ -574,7 +576,9 @@ function computeRouteMapTables(chartIds, groupSel, allGroups) {
 
   if (!rowItems.length) return { tables: [] };
 
-  // ── Union-Find: 工程名が1つでも共通する行を同じテーブルへ ──
+  // ── Union-Find: 背骨どうしのペアに限り、工程名が1つでも共通する行を同じテーブルへ統合する。
+  //    枝葉グループ（isBb=false）は統合対象から除外し、常に単独の連結成分（＝単独テーブル）
+  //    のまま残す。
   const n = rowItems.length;
   const par = Array.from({ length: n }, (_, i) => i);
   const find = i => { if (par[i] !== i) par[i] = find(par[i]); return par[i]; };
@@ -582,7 +586,9 @@ function computeRouteMapTables(chartIds, groupSel, allGroups) {
 
   const labelSets = rowItems.map(r => new Set(r.processes.map(p => p.label)));
   for (let i = 0; i < n; i++) {
+    if (!rowItems[i].isBb) continue;
     for (let j = i + 1; j < n; j++) {
+      if (!rowItems[j].isBb) continue;
       if (find(i) !== find(j)) {
         for (const l of labelSets[i]) { if (labelSets[j].has(l)) { unite(i, j); break; } }
       }

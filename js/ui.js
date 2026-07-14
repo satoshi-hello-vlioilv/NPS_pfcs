@@ -4255,17 +4255,31 @@ function _buildRouteTableHTML(rows, columns, headerMode, groupRows) {
   for (const row of rows) {
     const cid    = row.chartId;
     const seqMap = new Map(row.processes.map(p => [p.label, p.seq]));
-    const isActive = cid === W.activeId;
-    const cellsHTML = columns.map(col => {
-      const seq = seqMap.get(col);
-      return seq != null
-        ? `<td class="rm-td-val"><span class="rm-circle">${seq}</span></td>`
-        : `<td class="rm-td-null"></td>`;
-    }).join('');
+    const isActive    = cid === W.activeId;
+    const hasNoTarget = row.processes.length === 0;
+    const noTargetHTML = `<span class="rm-no-target" title="加工・検査（通し番号が付く工程）がありません">
+      <i class="fa-solid fa-circle-minus"></i>対象工程なし</span>`;
+
+    let cellsHTML;
+    if (hasNoTarget && columns.length > 0) {
+      // 他の行に工程名列があるのに、この行だけ対象が無い場合は列全体にまたがるメッセージにする
+      cellsHTML = `<td class="rm-td-empty" colspan="${columns.length}">${noTargetHTML}</td>`;
+    } else if (!hasNoTarget) {
+      cellsHTML = columns.map(col => {
+        const seq = seqMap.get(col);
+        return seq != null
+          ? `<td class="rm-td-val"><span class="rm-circle">${seq}</span></td>`
+          : `<td class="rm-td-null"></td>`;
+      }).join('');
+    } else {
+      cellsHTML = ''; // このテーブル自体に工程名列が無い（単独で対象が無いグループ）→ 氏名セル側に表示
+    }
+    // 工程名列が1つも無いテーブルでは、氏名セルの中に「対象工程なし」を添える
+    const nameNote = (hasNoTarget && columns.length === 0) ? noTargetHTML : '';
 
     if (groupRows) {
       const gc = row.groupColor || '#94a3b8';
-      html += `<tr class="rm-row-data ${isActive ? 'rm-row-active' : ''}">
+      html += `<tr class="rm-row-data ${isActive ? 'rm-row-active' : ''}${hasNoTarget ? ' rm-row-no-target' : ''}">
         <td class="rm-td-chart">
           ${isActive ? '<span class="rm-active-dot" title="編集中"></span>' : ''}
           <span class="rm-chart-name" data-cid="${cid}"
@@ -4274,6 +4288,7 @@ function _buildRouteTableHTML(rows, columns, headerMode, groupRows) {
           ${row.groupLabel ? `<span class="rm-td-chart-grp"
             style="color:${esc(gc)};border-color:${_hex2alpha(gc,0.5)};background:${_hex2alpha(gc,0.08)}"
             title="${row.isBb ? '背骨グループ' : '枝葉グループ（サブライン・部品）'}">${esc(row.groupLabel)}</span>` : ''}
+          ${nameNote}
         </td>${cellsHTML}</tr>`;
     } else {
       const isExp    = _routemapExpanded.has(cid);
@@ -4292,7 +4307,7 @@ function _buildRouteTableHTML(rows, columns, headerMode, groupRows) {
         : (bbGid ? new Set([bbGid]) : new Set());
       const isCustom = _routemapGroupSel.has(cid) && !(selGrps.size === 1 && selGrps.has(bbGid));
 
-      html += `<tr class="rm-row-data ${isActive ? 'rm-row-active' : ''} ${isExp ? 'rm-row-expanded' : ''}">
+      html += `<tr class="rm-row-data ${isActive ? 'rm-row-active' : ''} ${isExp ? 'rm-row-expanded' : ''}${hasNoTarget ? ' rm-row-no-target' : ''}">
         <td class="rm-td-chart rm-td-chart-exp" onclick="toggleRmGroupExpand('${cid}')">
           <span class="rm-exp-chv${isExp ? ' open' : ''}"><i class="fa-solid fa-chevron-right"></i></span>
           ${isActive ? '<span class="rm-active-dot" title="編集中"></span>' : ''}
@@ -4300,6 +4315,7 @@ function _buildRouteTableHTML(rows, columns, headerMode, groupRows) {
           <span class="rm-chart-name" data-cid="${cid}"
             ondblclick="startRenameChart('${cid}', this); event.stopPropagation();"
             title="ダブルクリックで名前変更" style="cursor:text;">${esc(row.chartName)}</span>
+          ${nameNote}
         </td>${cellsHTML}</tr>`;
 
       let grpInner;

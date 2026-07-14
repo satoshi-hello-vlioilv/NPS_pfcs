@@ -5333,6 +5333,28 @@ td.rm-td-chart { display: table-cell; } /* flex fallback fix */
 }
 .rm-td-null::after { content: '—'; }
 
+/* 加工・検査（通し番号付き工程）が1件も無い行 — 表示対象が無いことを明示 */
+.rm-td-empty {
+  text-align: center;
+  padding: 7px 10px;
+  border-right: 1px solid #cbd5e1;
+  background: repeating-linear-gradient(135deg, #f8fafc, #f8fafc 6px, #f1f5f9 6px, #f1f5f9 12px);
+}
+.rm-no-target {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 10px;
+  background: #f1f5f9;
+  border: 1px dashed #94a3b8;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.rm-row-no-target .rm-chart-name { color: #94a3b8; }
+
 /* ═══════════════════════════════════════
    工程経路図 — グループ選択展開UI
    ═══════════════════════════════════════ */

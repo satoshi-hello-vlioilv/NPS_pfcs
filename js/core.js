@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════
 
 /** アプリバージョン（セマンティックバージョニング）。更新時は CHANGELOG.md も更新すること。 */
-const APP_VERSION = '1.13.0';
+const APP_VERSION = '1.13.1';
 
 const C = 20;
 
@@ -555,13 +555,14 @@ function computeRouteMapTables(chartIds, groupSel, allGroups) {
         if (seen[p.label] > 1) p.label = `${p.label} (${seen[p.label]})`;
       }
 
-      if (processes.length) {
-        rowItems.push({
-          chartId: cid, chartName: chart.name,
-          groupId: gid, groupLabel: g?.label ?? '', groupColor: g?.color ?? '#94a3b8',
-          isBb: gid === bbGid, processes,
-        });
-      }
+      // 加工・検査（通し番号付き工程）が1件も無いグループも、
+      // 「表示対象が無い」ことが分かるよう行として残す（Union-Findでは
+      // 共有ラベルが無いため他と統合されず単独テーブルになる）。
+      rowItems.push({
+        chartId: cid, chartName: chart.name,
+        groupId: gid, groupLabel: g?.label ?? '', groupColor: g?.color ?? '#94a3b8',
+        isBb: gid === bbGid, processes,
+      });
     }
 
     if (cid !== W.activeId) {

@@ -357,6 +357,31 @@ function _nodeDecoSVG(type, label, unit, unitQty, badges, comment, r, tx,
   return svg;
 }
 
+/**
+ * 所属グループ名バッジ（showGroupBadge ON時のみ）。
+ * 工程名ラベル・状態バッジ（重要工程等）は node.x を中心に上方向へ積み上がるため、
+ * その最上部よりさらに上に、既存の積み上げ計算(_badgeLabelSVG と同一式)を用いて配置する。
+ * こうすることでバッジ数に関わらず衝突しない。
+ */
+function _groupBadgeSVG(node, r, tx) {
+  if (!showGroupBadge || !node.groupId) return '';
+  const g = G(node.groupId); if (!g) return '';
+  const label = g.label || 'グループ';
+  const pw = Math.min(130, Math.ceil(label.length * 6.4) + 22);
+
+  const statusCount = (node.badges || []).filter(bid => STATUS_BADGE_IDS.has(bid)).length;
+  const stackTop = LABEL_BOX_TOP - statusCount * 16 - 2; // _badgeLabelSVG の statusStartY と同一式
+  const by = stackTop - 14 - 3;
+  const bx = tx - pw / 2;
+
+  return `<g transform="translate(${bx},${by})" pointer-events="none">
+    <rect x="0" y="0" width="${pw}" height="14" rx="7" fill="${g.color}22" stroke="${g.color}" stroke-width="1"/>
+    <circle cx="9" cy="7" r="3" fill="${g.color}"/>
+    <text x="16" y="10.3" font-family="'Noto Sans JP',sans-serif" font-size="8.5" font-weight="700"
+      fill="${g.color}">${esc(label)}</text>
+  </g>`;
+}
+
 function renderNodes() {
   const nums = showNums ? computeNums() : {};
   let h = '';
@@ -376,6 +401,7 @@ function renderNodes() {
     if (inMulti) h += `<circle cx="${selCx}" r="${r+9}" fill="rgba(37,99,235,.05)" stroke="var(--acc)" stroke-width="1.5" stroke-dasharray="4,3"/>`;
 
     h += drawSym(node.type, 0, 0, showNums ? num : null);
+    h += _groupBadgeSVG(node, r, tx);
 
     h += _nodeDecoSVG(
       node.type, node.label || '', node.unit || '', node.unitQty || '',
@@ -442,8 +468,39 @@ function redraw() {
   renderMerges();
   renderNodes();
   updateProps();
+  updateChartLegend();
   if (currentView === 'list') updateListPanel();
   _scheduleLS();
+}
+
+// ── チャート凡例（加工・検査・運搬・停滞の集計）─────────────
+const _LEGEND_CATS = [
+  { l:'加工', k:['kako'] },
+  { l:'検査', k:['kensa_q','kensa_n','kensa_qn'] },
+  { l:'運搬', k:['unpan'] },
+  { l:'停滞', k:['tt_s','tt_k','tt_p','tt_l'] },
+];
+
+function updateChartLegend() {
+  const el = document.getElementById('chart-legend');
+  if (!el) return;
+  if (!S.nodes.length) { el.innerHTML = ''; return; }
+
+  const cnt = {};
+  for (const n of S.nodes) cnt[n.type] = (cnt[n.type] || 0) + 1;
+
+  const items = _LEGEND_CATS.map(c => {
+    const n = c.k.reduce((a, k) => a + (cnt[k] || 0), 0);
+    const color = SYMS[c.k[0]].color;
+    return `<div class="cl-item">
+      <span class="cl-dot" style="background:${color}"></span>
+      <span class="cl-lbl">${c.l}</span>
+      <span class="cl-cnt">${n}</span>
+    </div>`;
+  }).join('');
+
+  el.innerHTML = `<div class="cl-hdr"><i class="fa-solid fa-list-check"></i> 凡例</div>
+    <div class="cl-body">${items}</div>`;
 }
 
 // ── プレビュー SVG（モーダル用）─────────────────

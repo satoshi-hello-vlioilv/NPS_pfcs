@@ -3749,6 +3749,14 @@ function toggleMoveOnlyMode() {
     : '配置調整モード OFF — ドラッグで線・記号への挿入ができます');
 }
 
+/** チャート上の工程記号に所属グループ名バッジを表示するかどうかを切り替える */
+function toggleGroupBadge() {
+  showGroupBadge = !showGroupBadge;
+  document.getElementById('btn-group-badge').classList.toggle('on', showGroupBadge);
+  renderNodes();
+  setStatus(showGroupBadge ? 'グループ名バッジを表示中' : 'グループ名バッジの表示をオフにしました');
+}
+
 // 右ドロワー
 let _drawerOpen = false;
 

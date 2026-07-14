@@ -1007,6 +1007,8 @@ body{
   #cvs{position:static;width:100%;height:100vh;}
   /* 非表示配線の作成中プレビュー表示は印刷には出さない（最終出力仕様） */
   .eg[data-hidden-wire="1"] path{stroke:transparent!important;}
+  /* 凡例オーバーレイは #cwrap が position:static になり位置基準を失うため印刷では非表示 */
+  .chart-legend{display:none!important;}
 }
 
 /* ══════════════════════════════════════════════
@@ -2862,6 +2864,39 @@ body:not(.lf-dnd-active) .ng[data-multisel] { cursor: move; }
   background: #dcfce7;
   color: #15803d;
   border-color: #86efac;
+}
+
+/* ── チャート凡例（加工・検査・運搬・停滞の集計） ──────────────
+   地図の凡例のように、キャンバス左下に常設表示する */
+.chart-legend {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  z-index: 90;
+  background: rgba(255,255,255,.92);
+  backdrop-filter: blur(3px);
+  border: 1px solid var(--bdr);
+  border-radius: 10px;
+  box-shadow: 0 4px 14px rgba(0,0,0,.09);
+  padding: 8px 10px 7px;
+  pointer-events: none;
+  user-select: none;
+}
+.cl-hdr {
+  font-size: 9.5px; font-weight: 700; color: var(--mut);
+  text-transform: uppercase; letter-spacing: .06em;
+  display: flex; align-items: center; gap: 4px;
+  margin-bottom: 5px;
+}
+.cl-hdr i { font-size: 9px; color: var(--mut2); }
+.cl-body { display: flex; align-items: center; gap: 12px; }
+.cl-item { display: flex; align-items: center; gap: 5px; }
+.cl-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.cl-lbl { font-size: 11px; font-weight: 600; color: var(--txt2); }
+.cl-cnt {
+  font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 700;
+  color: var(--txt); background: var(--surf2); border-radius: 4px;
+  padding: 0 5px; min-width: 16px; text-align: center;
 }
 
 /* ── ホバー中ノード: バンド内即時ハイライト ───── */

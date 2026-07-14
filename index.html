@@ -200,6 +200,10 @@
               title="起点（内製/外製）直後などの非表示配線を作成中だけ表示します。印刷・画像保存では引き続き非表示です。">
               <i class="fa-solid fa-eye-low-vision"></i> 非表示配線
             </button>
+            <button class="tbtn" id="btn-group-badge" onclick="toggleGroupBadge()"
+              title="工程記号に所属グループ名のバッジを表示します">
+              <i class="fa-solid fa-tag"></i> グループ表示
+            </button>
           </div>
           <div class="tsep"></div>
           <div class="vtb-group" title="編集モード・整列">
@@ -227,6 +231,7 @@
           <div id="cwrap" style="position:relative;">
             <div id="band-div"></div>
             <div id="band-info"></div>
+            <div id="chart-legend" class="chart-legend"></div>
             <svg id="cvs" xmlns="http://www.w3.org/2000/svg">
               <defs>
                 <pattern id="gm" width="20" height="20" patternUnits="userSpaceOnUse">

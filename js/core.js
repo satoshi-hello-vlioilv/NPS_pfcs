@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════
 
 /** アプリバージョン（セマンティックバージョニング）。更新時は CHANGELOG.md も更新すること。 */
-const APP_VERSION = '1.8.0';
+const APP_VERSION = '1.9.0';
 
 const C = 20;
 
@@ -105,6 +105,7 @@ const snapP = (x, y) => ({ x: snapV(x), y: snapV(y) });
 let showNums       = true;
 let showHiddenWire = false; // true: 起点(内製/外製)直後などの非表示配線を作成中に可視化する
 let moveOnlyMode   = false; // true: ドラッグ移動時に配線の組み替え（挿入/抜き取り）を行わず位置だけ変更する
+let showGroupBadge = false; // true: チャート上の工程記号に所属グループ名バッジを表示する
 let currentView    = 'chart';
 let graphErrors    = {};
 

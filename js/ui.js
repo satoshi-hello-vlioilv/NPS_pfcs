@@ -4278,9 +4278,15 @@ function _buildRouteTableHTML(rows, columns, headerMode, groupRows) {
     } else {
       const isExp    = _routemapExpanded.has(cid);
       const chart    = W.charts.find(c => c.id === cid);
-      const groups   = chart?.groups || [];
-      const bbGid    = (groups.some(g => g.id === chart?.backboneGroupId) ? chart.backboneGroupId : null)
-        || findLongestLineGroupId(chart?.nodes || [], groups);
+      // getChartData() で改善前/改善後バリアントを考慮した「現在モードで実際に使われる」
+      // groups / nodes / backboneGroupId を取得する。chart.groups 等に直接アクセスすると
+      // バリアントを持つチャートで古い（別モードの）グループ一覧・背骨IDを参照してしまい、
+      // ここでの背骨/枝葉判定が toggleRmGroupCheck() 側の判定とズレて選択状態の表示が
+      // 壊れる（チェックしたはずのグループ行が消えるなど）原因になる。
+      const cd       = chart ? ((cid === W.activeId) ? { groups: S.groups, nodes: S.nodes, backboneGroupId: S.backboneGroupId } : getChartData(chart)) : { groups: [], nodes: [], backboneGroupId: null };
+      const groups   = cd.groups || [];
+      const bbGid    = (groups.some(g => g.id === cd.backboneGroupId) ? cd.backboneGroupId : null)
+        || findLongestLineGroupId(cd.nodes || [], groups);
       const selGrps  = _routemapGroupSel.has(cid)
         ? _routemapGroupSel.get(cid)
         : (bbGid ? new Set([bbGid]) : new Set());

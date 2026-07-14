@@ -1327,7 +1327,13 @@ async function _renderPageToBlob(vbX, vbY, vbW, vbH, canvasW, canvasH, marginMM,
   `;
   clone.insertBefore(styleEl, clone.firstChild);
 
-  const svgStr = new XMLSerializer().serializeToString(clone);
+  let svgStr = new XMLSerializer().serializeToString(clone);
+  // 凡例（加工・検査・運搬・停滞の集計）を各ページ左下に焼き込む。
+  // オンスクリーンの自由な位置はページ座標系と無関係なため反映できないが、
+  // 内容（集計値・表示サイズ）は画面表示と一致させる。
+  const legendSvg = _legendExportSVG(vbX, vbY, vbW, vbH);
+  if (legendSvg) svgStr = svgStr.replace('</svg>', legendSvg + '</svg>');
+
   const blob   = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
   const url    = URL.createObjectURL(blob);
 
@@ -1448,5 +1454,36 @@ async function runExport() {
     alert('画像保存エラー: ' + e.message);
   } finally {
     if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-download"></i> ダウンロード'; }
+  }
+}
+
+/**
+ * 現在の工程図を（凡例を含めて）PNG画像としてクリップボードにコピーする。
+ * A4ページ割りは行わず、図全体をそのままの縦横比・等倍相当の解像度で書き出す
+ * （Slack・Word等への貼り付け用の素早いコピー操作のため）。
+ */
+async function copyChartImageToClipboard() {
+  if (!S.nodes.length) { setStatus('コピーする工程図がありません'); return; }
+  if (!navigator.clipboard || typeof ClipboardItem === 'undefined') {
+    setStatus('⚠ このブラウザはクリップボードへの画像コピーに対応していません');
+    return;
+  }
+
+  const btn = document.getElementById('btn-copy-image');
+  const prevHtml = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> コピー中...'; }
+
+  try {
+    const bbox   = _getNodesBBox();
+    const SCALE  = 2; // Retina相当の解像度
+    const canvasW = Math.round(bbox.w * SCALE);
+    const canvasH = Math.round(bbox.h * SCALE);
+    const blob = await _renderPageToBlob(bbox.x, bbox.y, bbox.w, bbox.h, canvasW, canvasH, 0, 96);
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+    setStatus('工程図（凡例含む）をクリップボードにコピーしました — Ctrl+V で貼り付けられます');
+  } catch (e) {
+    setStatus('⚠ クリップボードへのコピーに失敗しました: ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = prevHtml; }
   }
 }

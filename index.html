@@ -37,8 +37,12 @@
     <button class="tbtn" onclick="window.print()" title="印刷">
       <i class="fa-solid fa-print"></i> 印刷
     </button>
-    <button class="tbtn" onclick="openExportDialog()" title="工程図をPNGで画像保存（A4）">
+    <button class="tbtn" onclick="openExportDialog()" title="工程図をPNGで画像保存（A4・凡例を含む）">
       <i class="fa-solid fa-image"></i> 画像保存
+    </button>
+    <button class="tbtn" id="btn-copy-image" onclick="copyChartImageToClipboard()"
+      title="工程図全体（凡例を含む）をPNG画像としてクリップボードにコピーします。Slack・Word等へそのまま貼り付けできます。">
+      <i class="fa-solid fa-clipboard"></i> 画像コピー
     </button>
     <div class="tsep"></div>
     <button class="tbtn danger" onclick="clearAll()" title="全データを消去">

@@ -611,6 +611,55 @@ function updateChartLegend() {
   _applyLegendPos();
 }
 
+/**
+ * 画像保存（PNG）・印刷用に、凡例を純SVGで生成する。
+ * オンスクリーンのドラッグ位置は viewBox とは無関係な画面座標のため反映できないので、
+ * 各ページの左下に固定表示する。サイズ設定（legendSize）は反映する。
+ * @param {number} vbX ページのviewBox X（ワールド座標）
+ * @param {number} vbY ページのviewBox Y
+ * @param {number} vbW ページのviewBox 幅
+ * @param {number} vbH ページのviewBox 高さ
+ */
+function _legendExportSVG(vbX, vbY, vbW, vbH) {
+  if (!S.nodes.length) return '';
+  const cnt = {};
+  for (const n of S.nodes) cnt[n.type] = (cnt[n.type] || 0) + 1;
+  const cats = _LEGEND_CATS.map(c => ({
+    l: c.l, color: SYMS[c.k[0]].color,
+    n: c.k.reduce((a, k) => a + (cnt[k] || 0), 0),
+  }));
+
+  const scale  = { s: 0.8, m: 1, l: 1.25 }[legendSize] || 1;
+  const FS     = 12 * scale;
+  const HDR_FS = 9 * scale;
+  const DOT    = 5 * scale;
+  const ITEM_W = 84 * scale;
+  const PADX   = 12 * scale, PADY = 9 * scale;
+  const HDR_H  = 16 * scale;
+  const ROW_H  = FS + 8 * scale;
+
+  const boxW = PADX * 2 + ITEM_W * cats.length;
+  const boxH = PADY + HDR_H + ROW_H;
+  const bx = vbX + 16, by = vbY + vbH - boxH - 16;
+
+  let items = '';
+  cats.forEach((c, i) => {
+    const ix = PADX + i * ITEM_W;
+    const cy = HDR_H + PADY / 2 + ROW_H / 2;
+    items += `<circle cx="${ix + DOT}" cy="${cy}" r="${DOT}" fill="${c.color}"/>
+      <text x="${ix + DOT * 2 + 5}" y="${cy + FS * 0.35}" font-family="'Noto Sans JP',sans-serif"
+        font-size="${FS}" font-weight="600" fill="#334155">${esc(c.l)} ${c.n}</text>`;
+  });
+
+  return `<g pointer-events="none" transform="translate(${bx},${by})">
+    <rect x="0" y="0" width="${boxW}" height="${boxH}" rx="9"
+      fill="rgba(255,255,255,0.95)" stroke="#e2e8f0" stroke-width="1.3"/>
+    <text x="${PADX}" y="${HDR_H - 3 * scale}" font-family="'Noto Sans JP',sans-serif"
+      font-size="${HDR_FS}" font-weight="700" fill="#64748b" letter-spacing="0.6">凡例</text>
+    ${items}
+  </g>`;
+}
+
 // ── プレビュー SVG（モーダル用）─────────────────
 
 function buildNodePreviewSVG({ type, label, unit, unitQty, badges, comment,

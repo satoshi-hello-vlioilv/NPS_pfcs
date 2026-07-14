@@ -406,7 +406,7 @@ function _groupRunFrameBox(run) {
     if (top < minTop) minTop = top;
     if (bottom > maxBottom) maxBottom = bottom;
   }
-  const padX = 20, padTop = 14, padBottom = 18;
+  const padX = 30, padTop = 14, padBottom = 28;
   return {
     x: minX - padX, y: minTop - padTop,
     w: (maxX - minX) + padX * 2,
@@ -443,7 +443,7 @@ function _groupBadgePillSVG(run) {
   const textX = pw / 2 - contentW / 2 + 14;
 
   return `<g pointer-events="none" transform="translate(${bx},${by})">
-    <rect x="0" y="0" width="${pw}" height="${ph}" rx="7" fill="${g.color}22" stroke="${g.color}" stroke-width="1"/>
+    <rect x="0" y="0" width="${pw}" height="${ph}" rx="7" fill="white" stroke="${g.color}" stroke-width="1" filter="url(#bsh)"/>
     <circle cx="${dotCx}" cy="7" r="3" fill="${g.color}"/>
     <text x="${textX}" y="10.3" font-family="'Noto Sans JP',sans-serif" font-size="8.5" font-weight="700"
       fill="${g.color}">${esc(label)}</text>

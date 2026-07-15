@@ -513,7 +513,7 @@ function renderNodes() {
         h += `<circle class="ph ph-in" cx="${dx}" cy="${dy}" r="5"
             fill="#16a34a" stroke="white" stroke-width="1.5"
             data-nid="${node.id}" data-pt="${pt}"
-            style="opacity:0;transition:opacity .1s;cursor:default"/>`;
+            style="opacity:0;transition:opacity .1s;cursor:crosshair"/>`;
       }
     }
 
@@ -531,7 +531,17 @@ function bindNodeEv() {
     g.addEventListener('mouseenter', () => g.querySelectorAll('.ph').forEach(p => p.style.opacity = '1'));
     g.addEventListener('mouseleave', () => g.querySelectorAll('.ph').forEach(p => p.style.opacity = '0'));
   });
-  document.querySelectorAll('.eg').forEach(g => g.addEventListener('click', onEdgeClick));
+  bindEdgeEv();
+}
+
+/**
+ * .eg（配線）へのイベントバインド。renderNodes() 内の bindNodeEv() から呼ばれるほか、
+ * renderEdges() 単体を呼んだ直後（redraw() を介さない軽量な再描画）にも明示的に呼び出し、
+ * 再生成された要素にリスナーが確実に付くようにする必要がある
+ * （renderEdges() 自体はDOMを作り直すだけでイベントは何もバインドしないため）。
+ */
+function bindEdgeEv() {
+  document.querySelectorAll('.eg').forEach(g => g.addEventListener('mousedown', onEdgeMD));
 }
 
 function redraw() {

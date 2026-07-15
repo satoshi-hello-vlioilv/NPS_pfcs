@@ -3533,6 +3533,53 @@ function openContextMenu(ev, kind, id) {
   _attachPopOutsideClose(pop);
 }
 
+/**
+ * 配線をダブルクリックしたときのメニュー。その場所に工程記号を挿入するか、配線を削除できる。
+ * 起点（内製/外製）は途中挿入する意味を持たないため対象外。
+ */
+function openEdgeInsertMenu(ev, eid) {
+  _closeFloatingPop('_ctx_menu');
+  _closeFloatingPop('_edge_ins_menu');
+  const edge = E(eid); if (!edge) return;
+  if (S.sel?.kind !== 'edge' || S.sel.id !== eid) { S.sel = { kind:'edge', id:eid }; redraw(); }
+
+  const w = c2w(ev.clientX, ev.clientY);
+  const insertTypes = GROUPS.filter(g => g.id !== 'kiten').flatMap(g => g.types);
+
+  const pop = document.createElement('div');
+  pop.id = '_edge_ins_menu'; pop.className = 'ctx-menu edge-ins-menu';
+  pop.innerHTML = `
+    <div class="ctx-label">工程記号を追加</div>
+    <div class="edge-ins-grid">
+      ${insertTypes.map(t => `
+        <button class="edge-ins-item" data-type="${t}" title="${esc(SYMS[t].name)}">
+          ${palIcoSVG(t, 26)}
+          <span>${esc(SYMS[t].shortName ?? SYMS[t].name)}</span>
+        </button>`).join('')}
+    </div>
+    <div class="ctx-sep"></div>
+    <button class="ctx-item danger" data-action="delete">
+      <i class="fa-solid fa-trash-can"></i><span>配線を削除</span>
+    </button>`;
+  document.body.appendChild(pop);
+  _positionPopAtPoint(pop, ev.clientX, ev.clientY);
+
+  pop.querySelectorAll('.edge-ins-item').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const type = btn.dataset.type;
+      pop.remove();
+      placeSymbolAt(type, w.x, w.y, null);
+    });
+  });
+  pop.querySelector('[data-action="delete"]').addEventListener('click', e => {
+    e.stopPropagation();
+    pop.remove();
+    deleteSel();
+  });
+  _attachPopOutsideClose(pop);
+}
+
 
 // ═══════════════════════════════════════════════
 // パレット・配置モード
@@ -3827,6 +3874,7 @@ function toggleHiddenWire() {
   showHiddenWire = !showHiddenWire;
   document.getElementById('btn-hidden-wire').classList.toggle('on', showHiddenWire);
   renderEdges();
+  bindEdgeEv(); // renderEdges() は要素を作り直すだけでイベントを再バインドしないため必要
   setStatus(showHiddenWire
     ? '非表示配線を表示中 — 最終出力（印刷・画像保存）では引き続き非表示です'
     : '非表示配線の表示をオフにしました');

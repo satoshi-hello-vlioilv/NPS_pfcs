@@ -645,6 +645,37 @@ function nearPort(wx, wy, excId) {
   return best;
 }
 
+/** 出力ポート（右端）の近傍検索。配線の始点(from)側を繋ぎ直すときに使用する。 */
+function nearOutPort(wx, wy, excId) {
+  const HIT = 16;
+  let best = null, bestD = HIT;
+  for (const n of S.nodes) {
+    if (n.id === excId) continue;
+    const p = portXY(n, 'r');
+    const d = Math.hypot(p.x - wx, p.y - wy);
+    if (d < bestD) { bestD = d; best = { nid:n.id, port:'r', px:p.x, py:p.y }; }
+  }
+  return best;
+}
+
+/** 循環判定。付け替え対象のエッジ自身は経路探索から除外する（自分自身との比較を避けるため）。 */
+function _wouldCreateCycleExcluding(fromId, toId, excludeEdgeId) {
+  if (fromId === toId) return true;
+  const visited = new Set();
+  const stack   = [toId];
+  while (stack.length) {
+    const cur = stack.pop();
+    if (cur === fromId) return true;
+    if (visited.has(cur)) continue;
+    visited.add(cur);
+    for (const e of S.edges) {
+      if (e.id === excludeEdgeId) continue;
+      if (e.from === cur) stack.push(e.to);
+    }
+  }
+  return false;
+}
+
 function onNodeMD(ev) {
   if (placeType) return;
   if (ev.button !== 0) return; // 右クリックはコンテキストメニュー用。ドラッグ/選択処理を起動しない
@@ -658,7 +689,21 @@ function onNodeMD(ev) {
     IA = { kind:'edge', fromId:nid, fromPort:'r', sx:pp.x, sy:pp.y };
     return;
   }
-  if (ev.target.closest('.ph-in')) return;
+  const portElIn = ev.target.closest('.ph-in');
+  if (portElIn) {
+    // 入力ポートには常に0〜1本の配線しか繋がらないため、既存の配線がある場合は
+    // それを掴んで繋ぎ直す操作として扱う（矢先を掴んで外すのと同じ直感的操作）
+    ev.stopPropagation(); ev.preventDefault();
+    const nid  = portElIn.dataset.nid;
+    const pt   = portElIn.dataset.pt;
+    const edge = S.edges.find(e => e.to === nid && e.toPort === pt);
+    if (!edge) return;
+    const node = N(nid); if (!node) return;
+    const pp = portXY(node, pt);
+    IA = { kind:'reconnect', edgeId: edge.id, end:'to', sx:pp.x, sy:pp.y };
+    document.querySelector(`.eg[data-eid="${edge.id}"]`)?.classList.add('edge-reconnecting');
+    return;
+  }
   ev.stopPropagation();
 
   const nid  = ev.currentTarget.dataset.nid;
@@ -701,11 +746,122 @@ function onNodeMD(ev) {
   redraw();
 }
 
-function onEdgeClick(ev) {
-  if (placeType) return;
+// 配線のダブルクリック検出（redraw で要素が再生成されるため mousedown ベースで自前実装。
+// ノードの _dblNid/_dblTime と同じ方式）
+let _dblEid = null;
+let _dblEdgeTime = 0;
+
+/**
+ * 配線の mousedown を処理する（選択・ダブルクリックメニュー・端部ドラッグ再接続を統括）。
+ * ・短時間で2回押されたらダブルクリックとみなし「工程記号を追加/配線を削除」メニューを開く
+ * ・端部（始点/終点）付近の押下はドラッグでの繋ぎ直しを開始する
+ * ・それ以外（線の途中）は通常のクリック選択として扱う
+ */
+function onEdgeMD(ev) {
+  if (placeType || ev.button !== 0) return;
+  const eid  = ev.currentTarget.dataset.eid;
+  const edge = E(eid); if (!edge) return;
+  const fn = N(edge.from), tn = N(edge.to);
+  if (!fn || !tn) return;
   ev.stopPropagation();
-  S.sel = { kind:'edge', id:ev.currentTarget.dataset.eid };
+
+  const now = Date.now();
+  if (eid === _dblEid && now - _dblEdgeTime < DBL_MS) {
+    _dblEid = null; _dblEdgeTime = 0;
+    ev.preventDefault();
+    openEdgeInsertMenu(ev, eid);
+    return;
+  }
+  _dblEid = eid; _dblEdgeTime = now;
+
+  const w      = c2w(ev.clientX, ev.clientY);
+  const fromPt = portXY(fn, edge.fromPort);
+  const toPt   = portXY(tn, edge.toPort);
+  // 端部付近と判定する距離は、短い配線（隣接記号どうしの直結など）では
+  // 全長の1/3を上限にして必ず「線の途中＝選択のみ」の領域が残るようにする
+  // （そうしないと短い配線ではクリックが常に端部扱いになり、単純な選択ができなくなる）
+  const edgeLen = Math.hypot(toPt.x - fromPt.x, toPt.y - fromPt.y);
+  const HIT     = Math.min(16, edgeLen / 3);
+  const dFrom   = Math.hypot(w.x - fromPt.x, w.y - fromPt.y);
+  const dTo     = Math.hypot(w.x - toPt.x,   w.y - toPt.y);
+
+  if (dFrom > HIT && dTo > HIT) {
+    // 端部以外（線の途中）: 通常のクリック選択
+    S.sel = { kind:'edge', id:eid };
+    redraw();
+    return;
+  }
+
+  ev.preventDefault();
+  const end = dFrom <= dTo ? 'from' : 'to';
+  const anchor = end === 'from' ? toPt : fromPt;
+  IA = { kind:'reconnect', edgeId:eid, end, sx:anchor.x, sy:anchor.y };
+  ev.currentTarget.classList.add('edge-reconnecting');
+}
+
+/**
+ * 配線の端部ドラッグによる繋ぎ直しをドロップ位置(wx,wy)で確定する。
+ * end==='to' なら終点(入力側)を、end==='from' なら始点(出力側)を新しい接続先に変更する。
+ * 新規接続作成（IA.kind==='edge'）と同じ制約（循環禁止・別グループ直結禁止・重複禁止）を適用する。
+ * 無効な位置へのドロップや変化なしの場合は何もせず終了する（キャンセル）。
+ */
+function _finishEdgeReconnect(eid, end, wx, wy) {
+  const edge = E(eid); if (!edge) return;
+
+  const tgt = end === 'to'
+    ? nearPort(wx, wy, edge.from)
+    : nearOutPort(wx, wy, edge.to);
+  if (!tgt) return; // 無効な場所へドロップ → 変更なしでキャンセル
+
+  const newFrom     = end === 'to' ? edge.from     : tgt.nid;
+  const newFromPort = end === 'to' ? edge.fromPort : tgt.port;
+  const newTo       = end === 'to' ? tgt.nid       : edge.to;
+  const newToPort   = end === 'to' ? tgt.port      : edge.toPort;
+  if (newFrom === newTo) return;
+  if (newFrom === edge.from && newFromPort === edge.fromPort &&
+      newTo   === edge.to   && newToPort   === edge.toPort) return; // 変化なし
+
+  // ── 循環接続チェック（付け替え対象のエッジ自身は経路探索から除外）──
+  if (_wouldCreateCycleExcluding(newFrom, newTo, edge.id)) {
+    showToast('⚠ 循環接続（ループ）は作成できません — 工程順は DAG（有向非巡回グラフ）でなければなりません', 'error');
+    return;
+  }
+
+  const fn = N(newFrom), tn = N(newTo);
+  // ── 異なるグループ間の接続チェック ─────────────
+  if (fn?.groupId && tn?.groupId && fn.groupId !== tn.groupId) {
+    if (newToPort === 't' || newToPort === 'b') {
+      // 合流接続への切り替え: 通常配線としては不要になるため削除し、合流(merge)として登録する
+      const existing = getMergeBySubGroup(fn.groupId);
+      if (existing && !confirm('このグループにはすでに合流接続があります。上書きしますか？')) return;
+      pushUndo();
+      if (existing) S.merges = (S.merges || []).filter(m => m.id !== existing.id);
+      S.edges = S.edges.filter(e => e.id !== edge.id);
+      S.merges = S.merges || [];
+      S.merges.push({ id: uid(), subGroupId: fn.groupId, targetNodeId: newTo });
+      syncChartFromListOrder();
+      _syncListOrderFromGraph();
+      redraw(); fitView();
+      setStatus('接続を合流に変更しました');
+    } else {
+      showToast('⚠ 別グループへの直接接続はできません — 合流させる場合は合流先記号の上/下ポートに接続してください', 'error');
+    }
+    return;
+  }
+
+  // ── 重複エッジチェック ──────────────────────────
+  if (_edgeExists(newFrom, newFromPort, newTo, newToPort)) {
+    showToast('⚠ この接続は既に存在します', 'warn');
+    return;
+  }
+
+  pushUndo();
+  edge.from = newFrom; edge.fromPort = newFromPort;
+  edge.to   = newTo;   edge.toPort   = newToPort;
+  edge.hidden = !!(fn && tn && (isBase(fn.type) || isBase(tn.type)));
+  _syncListOrderFromGraph();
   redraw();
+  setStatus('配線の接続先を変更しました');
 }
 
 /** 左サイドバーの幅をドラッグで調整可能にし、直近の幅を永続化する（タブ切替では幅を変えない） */
@@ -858,6 +1014,19 @@ function initEvents() {
 
     if (IA.kind === 'edge') {
       const tgt = nearPort(w.x, w.y, IA.fromId);
+      const ex = tgt ? tgt.px : w.x, ey = tgt ? tgt.py : w.y;
+      document.getElementById('TL').innerHTML =
+        `<line x1="${IA.sx}" y1="${IA.sy}" x2="${ex}" y2="${ey}"
+           stroke="var(--acc)" stroke-width="2" stroke-dasharray="5,3"/>
+         ${tgt ? `<circle cx="${tgt.px}" cy="${tgt.py}" r="9"
+           fill="var(--acc-bg)" stroke="var(--acc)" stroke-width="2"/>` : ''}`;
+    }
+
+    if (IA.kind === 'reconnect') {
+      const edge = E(IA.edgeId);
+      const tgt = edge
+        ? (IA.end === 'to' ? nearPort(w.x, w.y, edge.from) : nearOutPort(w.x, w.y, edge.to))
+        : null;
       const ex = tgt ? tgt.px : w.x, ey = tgt ? tgt.py : w.y;
       document.getElementById('TL').innerHTML =
         `<line x1="${IA.sx}" y1="${IA.sy}" x2="${ex}" y2="${ey}"
@@ -1046,6 +1215,17 @@ function initEvents() {
           }
         }
       }
+
+    } else if (kind === 'reconnect') {
+      const w = c2w(ev.clientX, ev.clientY);
+      document.getElementById('TL').innerHTML = '';
+      document.querySelector(`.eg[data-eid="${IA.edgeId}"]`)?.classList.remove('edge-reconnecting');
+      _finishEdgeReconnect(IA.edgeId, IA.end, w.x, w.y);
+      // 変更なし/キャンセル時も再接続中の見た目(edge-reconnecting)を確実に解除する。
+      // renderEdges() 単体は要素を作り直すだけでイベントを再バインドしないため bindEdgeEv() も呼ぶ
+      // （成功時は redraw() 側で再バインド済みだが、再実行しても addEventListener は重複登録されない）
+      renderEdges();
+      bindEdgeEv();
     }
     IA = null;
   });

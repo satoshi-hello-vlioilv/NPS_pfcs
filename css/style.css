@@ -1427,6 +1427,31 @@ body{
   text-transform:uppercase;letter-spacing:.06em;
 }
 
+/* 配線ダブルクリックメニュー（工程記号を追加） */
+.edge-ins-menu{width:232px;}
+.edge-ins-grid{
+  display:grid;grid-template-columns:repeat(3,1fr);gap:3px;
+  padding:2px 4px 4px;
+}
+.edge-ins-item{
+  display:flex;flex-direction:column;align-items:center;gap:4px;
+  padding:8px 4px 6px;border-radius:8px;
+  border:none;background:transparent;
+  cursor:pointer;font-family:inherit;
+  transition:background var(--tr);
+}
+.edge-ins-item:hover{background:var(--acc-bg);}
+.edge-ins-item svg{opacity:.85;}
+.edge-ins-item:hover svg{opacity:1;}
+.edge-ins-item span{
+  font-size:10.5px;font-weight:600;color:var(--txt2);line-height:1.2;
+  text-align:center;
+}
+.edge-ins-item:hover span{color:var(--acc);}
+
+/* 配線の端部ドラッグ中: 元の配線を薄くして再接続プレビューと区別しやすくする */
+.edge-reconnecting path{opacity:.25;}
+
 /* ══════════════════════════════════════════════
    空状態
    ══════════════════════════════════════════════ */

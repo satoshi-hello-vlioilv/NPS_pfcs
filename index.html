@@ -217,14 +217,15 @@
               title="ONにすると、ドラッグで配線を組み替えずに記号の位置だけを調整できます（配置の微調整用）。">
               <i class="fa-solid fa-arrows-up-down-left-right"></i> 配置調整モード
             </button>
-            <button class="tbtn" id="btn-layout-mode" onclick="openLayoutModePop(this)"
-              title="枝葉・独立グループを背骨の上下どちらに配置するか、自動配置パターンを選択します">
-              <i class="fa-solid fa-sitemap"></i> 配置: <span id="layout-mode-label">バランス</span>
-            </button>
-            <button class="tbtn" onclick="alignLayout()"
-              title="記号間隔を均等に整列し、ルールをチェックします">
-              <i class="fa-solid fa-align-center"></i> 整列・チェック
-            </button>
+            <div class="tbtn-split" title="記号間隔を均等に整列し、ルールをチェックします">
+              <button class="tbtn tbtn-split-main" onclick="alignLayout()">
+                <i class="fa-solid fa-align-center"></i> 整列・チェック: <span id="layout-mode-label">バランス</span>
+              </button>
+              <button class="tbtn tbtn-split-arrow" id="btn-layout-mode" onclick="openLayoutModePop(this)"
+                title="枝葉・独立グループを背骨の上下どちらに配置するか、自動配置パターンを選択します">
+                <i class="fa-solid fa-chevron-down"></i>
+              </button>
+            </div>
           </div>
         </div>
         <div class="vtb-spacer"></div>

@@ -104,6 +104,13 @@ body{
 
 .tsep{width:1px;height:20px;background:var(--bdr2);margin:0 3px;flex-shrink:0;}
 
+/* 分割ボタン: 主操作(クリックで即実行)と付随のドロップダウン操作を1つの見た目に統合する */
+.tbtn-split{display:inline-flex;align-items:stretch;border:1px solid transparent;border-radius:6px;transition:background var(--tr),border-color var(--tr);}
+.tbtn-split .tbtn{border-radius:0;}
+.tbtn-split-main{border-right:1px solid var(--bdr2);padding-right:8px;}
+.tbtn-split-arrow{padding-left:6px;padding-right:6px;}
+.tbtn-split-arrow i{font-size:10px;}
+
 /* 主要ボタン */
 .btn{
   border:none;padding:6px 14px;border-radius:6px;

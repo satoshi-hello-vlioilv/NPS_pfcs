@@ -286,6 +286,39 @@ function _packRowsIntoTracks(rows, nodeXMap) {
 }
 
 /**
+ * 合流接続を持つ行を、合流先ポートのX座標（背骨に近い側からの距離の目安）が
+ * 小さい順に並べ替える。
+ *
+ * 合流線は「行内の末端ノード右ポート → 合流先ノードの上/下ポート」という経路で
+ * 描かれ、末端ノードは _layoutRows の逆算処理により合流先のほぼ真下/真上
+ * （X座標がほぼ一致する位置）に配置される。つまり各行の合流線は、その行の
+ * 合流先X座標付近を通る縦線としてほぼ近似できる。
+ *
+ * ここで行を合流先Xの昇順に並べてから _packRowsIntoTracks に渡すと、
+ * 先に処理される行（＝背骨に近いトラックに割り当てられる行）の合流先Xは、
+ * 後から処理される行の合流先Xより必ず小さくなる。各行の占有範囲は
+ * 「合流先X座標を右端とし、そこから左へノード幅ぶん伸びる区間」に相当するため、
+ * 後続の行の合流先X（＝その行の縦線の位置）は先行する行の占有範囲より
+ * 必ず右側＝範囲外となり、縦線が手前のトラックの箱を横切ることがなくなる。
+ * 枝葉グループ同士の合流線が交差して見える不具合を防ぐための整列順。
+ *
+ * @param {Array<{groupId:string|null, nodes:object[]}>} rows
+ * @param {Object<string,number>} nodeXMap
+ * @returns {Array} 合流先X昇順に並べ替えた rows（合流を持たない行は末尾へ、元の順序を維持）
+ */
+function _sortRowsByMergeAttachX(rows, nodeXMap) {
+  const attachX = row => {
+    const m = getMergeBySubGroup(row.groupId);
+    if (!m) return Infinity; // 合流なし（このケースは実質発生しないが安全側でフォールバック）
+    const x = nodeXMap[m.targetNodeId];
+    return x == null ? Infinity : x;
+  };
+  return rows.map((row, i) => ({ row, i, x: attachX(row) }))
+    .sort((a, b) => (a.x - b.x) || (a.i - b.i))
+    .map(e => e.row);
+}
+
+/**
  * 重み付きの項目群を上側/下側へ貪欲に振り分ける。
  * prefer=null: 常に軽い側へ足す（従来の「バランス」ロジックそのもの）。
  * prefer='top'/'bottom': BIAS 倍まで優先側へ積み増してから反対側へ切り替える
@@ -459,9 +492,13 @@ function _orderGroupsForLayout(grouped, nodeXMap, mode) {
     aboveIndeps = []; belowIndeps = independents;
   }
 
-  // 上側・下側の各カテゴリ内で、X方向に重ならない行同士を同じ高さへ詰める
-  const aboveBranchTrackOf = _packRowsIntoTracks(aboveBranches.flatMap(b => b.rows), nodeXMap);
-  const belowBranchTrackOf = _packRowsIntoTracks(belowBranches.flatMap(b => b.rows), nodeXMap);
+  // 上側・下側の各カテゴリ内で、X方向に重ならない行同士を同じ高さへ詰める。
+  // 枝葉行は合流先X昇順（＝背骨に近い側から）に処理することで、後続行の合流線が
+  // 手前のトラックに積まれた行の箱を横切らないようにする（安全側の配置）。
+  const aboveBranchTrackOf = _packRowsIntoTracks(
+    _sortRowsByMergeAttachX(aboveBranches.flatMap(b => b.rows), nodeXMap), nodeXMap);
+  const belowBranchTrackOf = _packRowsIntoTracks(
+    _sortRowsByMergeAttachX(belowBranches.flatMap(b => b.rows), nodeXMap), nodeXMap);
   const aboveIndepTrackOf  = _packRowsIntoTracks(aboveIndeps, nodeXMap);
   const belowIndepTrackOf  = _packRowsIntoTracks(belowIndeps, nodeXMap);
   const aboveBranchCount = aboveBranchTrackOf.size ? Math.max(...aboveBranchTrackOf.values()) + 1 : 0;

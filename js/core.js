@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════
 
 /** アプリバージョン（セマンティックバージョニング）。更新時は CHANGELOG.md も更新すること。 */
-const APP_VERSION = '1.15.0';
+const APP_VERSION = '1.16.0';
 
 const C = 20;
 
@@ -88,9 +88,26 @@ const S = {
   listOrder:[],
   merges:[],
   backboneGroupId: null,  // null = 一番長いライン（メインライン）を自動採用
+  layoutMode:      'balance', // 枝葉・独立グループの自動配置パターン（LAYOUT_MODES 参照）
   _undo:[],
   _redo:[],
 };
+
+// 枝葉グループ・独立グループの自動配置パターン
+const LAYOUT_MODES = [
+  { id:'balance',      label:'バランス', icon:'fa-scale-balanced',
+    desc:'データ量に応じて背骨の上下に均等になるよう振り分けます' },
+  { id:'preferTop',    label:'上優先',   icon:'fa-arrow-up',
+    desc:'背骨に対してできるだけ上部への配置を優先します' },
+  { id:'preferBottom', label:'下優先',   icon:'fa-arrow-down',
+    desc:'背骨に対してできるだけ下部への配置を優先します' },
+  { id:'topOnly',      label:'上配置',   icon:'fa-angles-up',
+    desc:'すべて背骨の上部にのみ配置します' },
+  { id:'bottomOnly',   label:'下配置',   icon:'fa-angles-down',
+    desc:'すべて背骨の下部にのみ配置します' },
+  { id:'custom',       label:'カスタム', icon:'fa-hand',
+    desc:'現在の上下位置関係を記憶し、間隔だけを整えます（手動で動かした配置を維持）' },
+];
 
 let _uid = 1;
 const uid = () => 'u' + (_uid++);
@@ -257,6 +274,7 @@ function syncActiveChart() {
     merges:          JSON.parse(JSON.stringify(S.merges ||[])),
     listOrder:       [...S.listOrder],
     backboneGroupId: S.backboneGroupId || null,
+    layoutMode:      S.layoutMode || 'balance',
   };
   if (chart.impVariants) {
     // バリアントを持つ場合：現在モードのバリアントを更新、meta はチャート共通
@@ -289,6 +307,7 @@ function loadChartIntoS(chart) {
   S.merges          = base.merges          ||[];
   S.listOrder       = base.listOrder       ||[];
   S.backboneGroupId = (v ? v.backboneGroupId : null) ?? chart.backboneGroupId ?? null;
+  S.layoutMode      = (v ? v.layoutMode : null) ?? chart.layoutMode ?? 'balance';
   S.sel             = null;
   S._undo           =[];
   S._redo           =[];

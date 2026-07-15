@@ -3132,6 +3132,52 @@ function openGroupPop(nid, btn) {
   _attachPopOutsideClose(pop);
 }
 
+// ─── 自動配置パターンポップオーバー ────────────────
+
+function openLayoutModePop(btn) {
+  _closeFloatingPop('_layout_mode_pop');
+  const pop = document.createElement('div');
+  pop.id = '_layout_mode_pop'; pop.className = 'fl-pop layout-mode-pop';
+  pop.innerHTML = `
+    <div class="fl-pop-hdr"><i class="fa-solid fa-sitemap"></i> 自動配置パターン</div>
+    ${LAYOUT_MODES.map(m => {
+      const active = (S.layoutMode || 'balance') === m.id;
+      return `<button class="lmpop-item${active ? ' active' : ''}" data-mode="${m.id}">
+        <i class="fa-solid ${m.icon} lmpop-icon"></i>
+        <span class="lmpop-text">
+          <span class="lmpop-label">${esc(m.label)}</span>
+          <span class="lmpop-desc">${esc(m.desc)}</span>
+        </span>
+        ${active ? '<i class="fa-solid fa-check gpop-check"></i>' : ''}
+      </button>`;
+    }).join('')}`;
+  document.body.appendChild(pop);
+  _positionPop(pop, btn);
+  pop.querySelectorAll('.lmpop-item').forEach(item => {
+    item.addEventListener('click', ev => {
+      ev.stopPropagation();
+      setLayoutMode(item.dataset.mode);
+      pop.remove();
+    });
+  });
+  _attachPopOutsideClose(pop);
+}
+
+/** 自動配置パターンを切り替え、即座に再整列して結果を反映する */
+function setLayoutMode(mode) {
+  if (!LAYOUT_MODES.some(m => m.id === mode)) return;
+  S.layoutMode = mode;
+  alignLayout();
+}
+
+/** 現在の S.layoutMode をツールバーボタンの表示に反映する（redraw から呼ばれる） */
+function _syncLayoutModeUI() {
+  const label = document.getElementById('layout-mode-label');
+  if (!label) return;
+  const m = LAYOUT_MODES.find(x => x.id === (S.layoutMode || 'balance'));
+  label.textContent = m ? m.label : 'バランス';
+}
+
 // ─── チャートフォーカス ──────────────────────────
 
 // ═══════════════════════════════════════════════

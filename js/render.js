@@ -551,6 +551,7 @@ function redraw() {
   renderNodes();
   updateProps();
   updateChartLegend();
+  _syncLayoutModeUI();
   if (currentView === 'list') updateListPanel();
   _scheduleLS();
 }

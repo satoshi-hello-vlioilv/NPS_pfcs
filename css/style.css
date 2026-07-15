@@ -1392,6 +1392,24 @@ body{
 }
 .gpop-hint i{color:var(--mut2);}
 
+/* 自動配置パターンポップオーバー */
+.layout-mode-pop{width:250px;}
+.lmpop-item{
+  display:flex;align-items:flex-start;gap:10px;
+  width:100%;padding:9px 13px;
+  border:none;background:transparent;
+  cursor:pointer;font-family:inherit;text-align:left;
+  transition:background var(--tr);
+}
+.lmpop-item:hover{background:#f1f5f9;}
+.lmpop-item.active{background:var(--acc-bg);}
+.lmpop-item+.lmpop-item{border-top:1px solid #f1f5f9;}
+.lmpop-icon{color:var(--acc);font-size:12px;flex-shrink:0;margin-top:2px;width:14px;text-align:center;}
+.lmpop-text{flex:1;display:flex;flex-direction:column;gap:2px;}
+.lmpop-label{font-size:12.5px;font-weight:700;color:var(--txt);}
+.lmpop-desc{font-size:10.5px;color:var(--mut);line-height:1.4;}
+.lmpop-item .gpop-check{margin-top:2px;}
+
 /* 右クリックコンテキストメニュー（チャート編集画面） */
 .ctx-menu{
   position:fixed;z-index:9995;

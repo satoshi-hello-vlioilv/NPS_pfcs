@@ -286,28 +286,86 @@ function _packRowsIntoTracks(rows, nodeXMap) {
 }
 
 /**
+ * 重み付きの項目群を上側/下側へ貪欲に振り分ける。
+ * prefer=null: 常に軽い側へ足す（従来の「バランス」ロジックそのもの）。
+ * prefer='top'/'bottom': BIAS 倍まで優先側へ積み増してから反対側へ切り替える
+ * （＝「上優先」「下優先」— 完全に片側固定にはしない、あくまで貪欲法の重み比較を偏らせるだけ）。
+ *
+ * @param {Array<{weight:number}>} items
+ * @param {'top'|'bottom'|null} prefer
+ * @returns {{above:Array, below:Array}}
+ */
+function _distributeGreedy(items, prefer) {
+  const BIAS = 3;
+  const above = [], below = [];
+  let aboveW = 0, belowW = 0;
+  for (const it of items) {
+    let goAbove;
+    if (prefer === 'top')         goAbove = aboveW <= belowW * BIAS;
+    else if (prefer === 'bottom') goAbove = !(belowW <= aboveW * BIAS);
+    else                          goAbove = aboveW <= belowW;
+    if (goAbove) { above.push(it); aboveW += it.weight; }
+    else         { below.push(it); belowW += it.weight; }
+  }
+  return { above, below };
+}
+
+/**
+ * カスタム配置モード: グループ行の「現在のY位置」から行オフセットを逆算してそのまま踏襲する。
+ * データ量や合流構造から自動で上下を振り分け直すのではなく、ユーザーがドラッグ等で
+ * 手動調整した上下の位置関係を記憶し、X方向の間隔・整列だけをやり直す。
+ * 背骨グループは常にオフセット0に固定する。
+ *
+ * @param {Array<{groupId:string|null, nodes:object[]}>} grouped
+ * @returns {Map<string|null, number>}
+ */
+function _orderGroupsForLayoutCustom(grouped) {
+  const bbId  = getBackboneGroupId();
+  const rowH  = C * 14;
+  const offsets = new Map();
+  for (const { groupId, nodes } of grouped) {
+    if (!nodes.length) continue;
+    if (bbId != null && groupId === bbId) { offsets.set(groupId, 0); continue; }
+    const avgY = nodes.reduce((s, n) => s + n.y, 0) / nodes.length;
+    offsets.set(groupId, Math.round(avgY / rowH));
+  }
+  return offsets;
+}
+
+/**
  * グループ行の縦方向の並び順を、背骨グループを中心とした構造で決定する。
  * 従来は S.groups の登録順（配置とは無関係な配列順）で単純に上から積んでいたため、
  * データ量や合流構造を無視した不規則な配置になっていた。
  *
- * アルゴリズム:
+ * S.layoutMode（LAYOUT_MODES）に応じて枝葉・独立グループの上下振り分け方が変わる:
+ *   balance:      データ量に応じて上下へ均等に振り分ける（従来のデフォルト動作）
+ *   preferTop:    上側への配置を優先しつつ、貪欲法の重み比較を偏らせる（絶対ではない）
+ *   preferBottom: 下側への配置を優先しつつ、同上
+ *   topOnly:      枝葉・独立グループを問答無用ですべて上側に配置
+ *   bottomOnly:   同、すべて下側に配置
+ *   custom:       _orderGroupsForLayoutCustom へ委譲（現在の配置を記憶して踏襲）
+ *
+ * アルゴリズム（custom 以外）:
  *   1. 背骨グループ（メインライン）を中心行に据える
  *   2. 背骨へ合流する（さらにその先へ合流する子孫も含む）グループを
- *      「枝」として木構造にまとめ、各枝の合計ノード数（データ量）を
- *      背骨の上側・下側に交互ではなく、より少ない側へ足していく貪欲法で
- *      振り分け、上下の分量ができるだけ均等になるようにする
- *   3. 背骨と無関係な独立グループ（合流のないグループ）はデータ量の多い順に
- *      最下段へ積む（背骨中心の構造を崩さないよう分離して配置）
+ *      「枝」として木構造にまとめ、各枝の合計ノード数（データ量）をもとに
+ *      _distributeGreedy で上側・下側へ振り分ける
+ *   3. 背骨と無関係な独立グループ（合流のないグループ）も同様に振り分ける
+ *      （balance モードのみ、従来どおり常に下側の枝葉より外側の最下段へ）
  *   4. グループなし行は常に最下段
- *   5. 上記で「上側」「下側」「独立」に振り分けたグループ同士のうち、X方向に重ならない
+ *   5. 上記で「上側」「下側」に振り分けたグループ同士のうち、X方向に重ならない
  *      （＝枝葉同士が横で衝突しない）ものは _packRowsIntoTracks で同じ高さへ詰め、
  *      表示全体の縦幅をできるだけコンパクトにする
  *
  * @param {Array<{groupId:string|null, group:object|null, nodes:object[]}>} grouped
  * @param {Object<string,number>} nodeXMap  各ノードのX座標（パッキング判定に使用）
+ * @param {string} [mode] 省略時は S.layoutMode（未設定なら 'balance'）を使用
  * @returns {Map<string|null, number>} groupId → 行オフセット（0=背骨、負=上側、正=下側）
  */
-function _orderGroupsForLayout(grouped, nodeXMap) {
+function _orderGroupsForLayout(grouped, nodeXMap, mode) {
+  mode = mode || S.layoutMode || 'balance';
+  if (mode === 'custom') return _orderGroupsForLayoutCustom(grouped);
+
   const byId = new Map(grouped.map(row => [row.groupId, row]));
   const ungroupedRow = grouped.find(row => row.groupId == null && row.nodes.length);
   const realRows = grouped.filter(row => row.groupId != null && row.nodes.length);
@@ -358,19 +416,12 @@ function _orderGroupsForLayout(grouped, nodeXMap) {
     bbRows = [bbRow];
   }
 
-  // 背骨に直接合流する枝を、データ量の多い順に上下へ貪欲配分してバランスさせる
+  // 背骨に直接合流する枝（データ量の多い順）
   const directChildren = bbRow ? (childrenOf.get(bbRow.groupId) || []) : [];
   const branches = directChildren
     .map(gid => collectBranch(gid))
     .filter(b => b.rows.length)
     .sort((a, b) => b.weight - a.weight);
-
-  const above = [], below = [];
-  let aboveW = 0, belowW = 0;
-  for (const br of branches) {
-    if (aboveW <= belowW) { above.push(br); aboveW += br.weight; }
-    else                  { below.push(br); belowW += br.weight; }
-  }
 
   // 背骨自体が無い場合（グループ0件など）は、X方向に重ならないものを同じ高さへ詰めて積む
   if (!bbRow) {
@@ -385,25 +436,45 @@ function _orderGroupsForLayout(grouped, nodeXMap) {
     return offsets;
   }
 
-  // 背骨と合流関係にない独立グループ（別ライン）はデータ量の多い順に最下段へ
+  // 背骨と合流関係にない独立グループ（別ライン）
   const independents = realRows
     .filter(r => !visited.has(r.groupId))
     .sort((a, b) => b.nodes.length - a.nodes.length);
   for (const r of independents) visited.add(r.groupId);
 
-  // 上側・下側・独立の各カテゴリ内で、X方向に重ならない行同士を同じ高さへ詰める
-  const aboveTrackOf = _packRowsIntoTracks(above.flatMap(b => b.rows), nodeXMap);
-  const belowTrackOf = _packRowsIntoTracks(below.flatMap(b => b.rows), nodeXMap);
-  const indepTrackOf = _packRowsIntoTracks(independents, nodeXMap);
-  const belowTrackCount = belowTrackOf.size ? Math.max(...belowTrackOf.values()) + 1 : 0;
-  const indepTrackCount = indepTrackOf.size ? Math.max(...indepTrackOf.values()) + 1 : 0;
+  let aboveBranches, belowBranches, aboveIndeps, belowIndeps;
+  if (mode === 'topOnly') {
+    aboveBranches = branches; belowBranches = [];
+    aboveIndeps   = independents; belowIndeps = [];
+  } else if (mode === 'bottomOnly') {
+    aboveBranches = []; belowBranches = branches;
+    aboveIndeps   = []; belowIndeps = independents;
+  } else if (mode === 'preferTop' || mode === 'preferBottom') {
+    const prefer = mode === 'preferTop' ? 'top' : 'bottom';
+    ({ above: aboveBranches, below: belowBranches } = _distributeGreedy(branches, prefer));
+    ({ above: aboveIndeps,   below: belowIndeps   } = _distributeGreedy(independents, prefer));
+  } else {
+    // balance（デフォルト）: 独立グループは従来どおり常に枝葉より外側の最下段へ
+    ({ above: aboveBranches, below: belowBranches } = _distributeGreedy(branches, null));
+    aboveIndeps = []; belowIndeps = independents;
+  }
+
+  // 上側・下側の各カテゴリ内で、X方向に重ならない行同士を同じ高さへ詰める
+  const aboveBranchTrackOf = _packRowsIntoTracks(aboveBranches.flatMap(b => b.rows), nodeXMap);
+  const belowBranchTrackOf = _packRowsIntoTracks(belowBranches.flatMap(b => b.rows), nodeXMap);
+  const aboveIndepTrackOf  = _packRowsIntoTracks(aboveIndeps, nodeXMap);
+  const belowIndepTrackOf  = _packRowsIntoTracks(belowIndeps, nodeXMap);
+  const aboveBranchCount = aboveBranchTrackOf.size ? Math.max(...aboveBranchTrackOf.values()) + 1 : 0;
+  const belowBranchCount = belowBranchTrackOf.size ? Math.max(...belowBranchTrackOf.values()) + 1 : 0;
+  const belowIndepCount  = belowIndepTrackOf.size  ? Math.max(...belowIndepTrackOf.values())  + 1 : 0;
 
   const offsets = new Map();
   offsets.set(bbRow.groupId, 0);
-  for (const [gid, t] of aboveTrackOf) offsets.set(gid, -(t + 1));
-  for (const [gid, t] of belowTrackOf) offsets.set(gid, t + 1);
-  for (const [gid, t] of indepTrackOf) offsets.set(gid, belowTrackCount + t + 1);
-  if (ungroupedRow) offsets.set(null, belowTrackCount + indepTrackCount + 1);
+  for (const [gid, t] of aboveBranchTrackOf) offsets.set(gid, -(t + 1));
+  for (const [gid, t] of belowBranchTrackOf) offsets.set(gid, t + 1);
+  for (const [gid, t] of aboveIndepTrackOf)  offsets.set(gid, -(aboveBranchCount + t + 1));
+  for (const [gid, t] of belowIndepTrackOf)  offsets.set(gid, belowBranchCount + t + 1);
+  if (ungroupedRow) offsets.set(null, belowBranchCount + belowIndepCount + 1);
 
   return offsets;
 }

@@ -606,15 +606,23 @@ function placeSymbolAt(type, wx, wy, prevSelId) {
     // 空き領域へのドロップ: 選択中ノードのグループ・並び順を引き継いで自動接続
     if (prevSelId) {
       node.groupId = N(prevSelId)?.groupId ?? null;
+    } else if (S.activeGroupId === '__ug__') {
+      node.groupId = null;
+    } else if (S.activeGroupId && G(S.activeGroupId)) {
+      // 明示的にアクティブ化されたグループ（空グループでも対象にできる）
+      node.groupId = S.activeGroupId;
     } else {
       // 無選択で作成された工程は無名グループに所属させる
       node.groupId = ensureDefaultGroup();
     }
     _insertInListOrder(node.id, prevSelId);
     autoConnect(node, prevSelId);
+    const g = node.groupId ? G(node.groupId) : null;
+    setStatus(g ? `「${g.label}」に工程を追加しました` : '工程を追加しました（グループなし）');
   }
 
   S.sel = { kind:'node', id:node.id };
+  S.activeGroupId = node.groupId || null;
   document.getElementById('TL').innerHTML = '';
   redraw();
   return node;

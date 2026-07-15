@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════
 
 /** アプリバージョン（セマンティックバージョニング）。更新時は CHANGELOG.md も更新すること。 */
-const APP_VERSION = '1.16.0';
+const APP_VERSION = '1.17.0';
 
 const C = 20;
 
@@ -89,6 +89,7 @@ const S = {
   merges:[],
   backboneGroupId: null,  // null = 一番長いライン（メインライン）を自動採用
   layoutMode:      'balance', // 枝葉・独立グループの自動配置パターン（LAYOUT_MODES 参照）
+  activeGroupId:   null,  // 記号追加の明示的な対象グループ（'__ug__' = グループなしを明示指定、空グループも指定可）
   _undo:[],
   _redo:[],
 };
@@ -275,6 +276,7 @@ function syncActiveChart() {
     listOrder:       [...S.listOrder],
     backboneGroupId: S.backboneGroupId || null,
     layoutMode:      S.layoutMode || 'balance',
+    activeGroupId:   S.activeGroupId || null,
   };
   if (chart.impVariants) {
     // バリアントを持つ場合：現在モードのバリアントを更新、meta はチャート共通
@@ -308,6 +310,7 @@ function loadChartIntoS(chart) {
   S.listOrder       = base.listOrder       ||[];
   S.backboneGroupId = (v ? v.backboneGroupId : null) ?? chart.backboneGroupId ?? null;
   S.layoutMode      = (v ? v.layoutMode : null) ?? chart.layoutMode ?? 'balance';
+  S.activeGroupId   = (v ? v.activeGroupId : null) ?? chart.activeGroupId ?? null;
   S.sel             = null;
   S._undo           =[];
   S._redo           =[];
@@ -749,6 +752,29 @@ function ensureDefaultGroup() {
     S.groups.push(g);
   }
   return g.id;
+}
+
+// ── アクティブグループ（記号追加の対象）───────────
+
+/**
+ * 記号追加の対象となる「アクティブグループ」を解決する。
+ * 優先順位：①選択中ノードの所属グループ（従来どおり）
+ *          ②明示的にアクティブ化されたグループ（S.activeGroupId。空グループでも対象にできる）
+ *          ③リスト末尾のノードの所属グループ
+ * 戻り値は groupId（null = グループなし）。
+ */
+function resolveActiveGroupId() {
+  if (S.sel?.kind === 'node') {
+    const n = N(S.sel.id);
+    if (n) return n.groupId || null;
+  }
+  if (S.activeGroupId === '__ug__') return null;
+  if (S.activeGroupId && G(S.activeGroupId)) return S.activeGroupId;
+  if (S.listOrder.length) {
+    const n = N(S.listOrder[S.listOrder.length - 1]);
+    if (n) return n.groupId || null;
+  }
+  return null;
 }
 
 // ── リストOrder 挿入ヘルパー ──────────────────────

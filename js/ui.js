@@ -2160,6 +2160,7 @@ function updateListPanel() {
   }
   _bindLfEvents(body);
   _updateSlistInfo();
+  _syncListPaletteActiveLabel();
 }
 
 // ── チャートセクション HTML 生成 ────────────────────────────
@@ -2302,12 +2303,14 @@ function _lfChartSectionHTML(chart, isActive) {
 // アクティブチャートのグループ/アイテム HTML（S 状態を使用）
 function _lfActiveGroupsHTML() {
   const nums = computeNums();
+  const activeGid = resolveActiveGroupId();
   let html = '';
 
   for (const g of (S.groups || [])) {
     const members = S.listOrder.map(id => N(id)).filter(n => n && n.groupId === g.id);
     const isCol   = _lpCollapsed.has(g.id);
     const isBB    = g.id === getBackboneGroupId();
+    const isAct   = g.id === activeGid;
 
     const merge       = getMergeBySubGroup(g.id);
     const mergeTgt    = merge ? N(merge.targetNodeId) : null;
@@ -2328,7 +2331,8 @@ function _lfActiveGroupsHTML() {
 
     html += `
 <div class="lf-group" data-gid="${g.id}">
-  <div class="lf-ghdr" data-gid="${g.id}" style="border-left:3px solid ${g.color}">
+  <div class="lf-ghdr${isAct ? ' lf-ghdr-active' : ''}" data-gid="${g.id}" style="border-left:3px solid ${g.color}"
+    title="クリックして「${esc(g.label)}」を記号追加の対象にする">
     <i class="fa-solid fa-grip-vertical lf-ghdr-grip" title="ドラッグして別グループの工程に合流接続"></i>
     <i class="fa-solid fa-chevron-${isCol ? 'right' : 'down'} lf-chv"></i>
     <span class="lf-gclr" style="background:${g.color}"></span>
@@ -2336,6 +2340,7 @@ function _lfActiveGroupsHTML() {
     <span class="lf-glbl">${esc(g.label)}</span>
     <span class="lf-gcnt">${members.length}件</span>
     ${isBB ? `<span class="bb-badge" title="背骨グループ"><i class="fa-solid fa-bone"></i></span>` : ''}
+    ${isAct ? `<span class="lf-active-badge" title="記号追加の対象グループです"><i class="fa-solid fa-plus"></i> 追加先</span>` : ''}
     <div class="lf-gacts">
       <button class="l-act-btn" title="グループ名を変更"
         onclick="event.stopPropagation();_lfRenameGroup('${g.id}',this)">
@@ -2354,7 +2359,10 @@ function _lfActiveGroupsHTML() {
   ${isCol ? '' : `<div class="lf-gitems" data-gid="${g.id}">
     ${members.length
       ? members.map(n => _lfItemHTML(n, nums)).join('')
-      : '<div class="lf-empty-folder"><i class="fa-solid fa-inbox"></i> このグループはまだ空です</div>'
+      : `<div class="lf-empty-folder${isAct ? ' lf-empty-folder-active' : ''}">
+           <i class="fa-solid fa-inbox"></i>
+           ${isAct ? 'このグループが追加先です。下のパレットから記号を追加できます' : 'このグループはまだ空です（ヘッダーをクリックすると追加先にできます）'}
+         </div>`
     }
     <div class="lf-drop-hint" data-gid="${g.id}">
       <i class="fa-solid fa-arrow-turn-down"></i>
@@ -2368,13 +2376,16 @@ function _lfActiveGroupsHTML() {
   // グループなし
   const ungrouped = S.listOrder.map(id => N(id)).filter(n => n && (!n.groupId || !G(n.groupId)));
   const ugCol = _lpCollapsed.has('__ug__');
+  const ugAct = activeGid == null;
   html += `
 <div class="lf-group lf-ungrouped" data-gid="__ug__">
-  <div class="lf-ghdr lf-ghdr-ug" data-gid="__ug__">
+  <div class="lf-ghdr lf-ghdr-ug${ugAct ? ' lf-ghdr-active' : ''}" data-gid="__ug__"
+    title="クリックして「グループなし」を記号追加の対象にする">
     <i class="fa-solid fa-chevron-${ugCol ? 'right' : 'down'} lf-chv"></i>
     <i class="fa-solid fa-inbox lf-gico lf-gico-ug"></i>
     <span class="lf-glbl lf-glbl-ug">グループなし</span>
     <span class="lf-gcnt">${ungrouped.length}件</span>
+    ${ugAct ? `<span class="lf-active-badge" title="記号追加の対象です"><i class="fa-solid fa-plus"></i> 追加先</span>` : ''}
   </div>
   ${ugCol ? '' : `<div class="lf-gitems" data-gid="__ug__">
     ${ungrouped.map(n => _lfItemHTML(n, nums)).join('')}
@@ -2589,14 +2600,17 @@ function _bindLfEvents(body) {
     });
   });
 
-  // グループヘッダー → クリックで折りたたみトグル / グリップDnDで合流接続
+  // グループヘッダー → クリックで折りたたみトグル + このグループを記号追加の対象にする
+  // （選択中ノードを解除するため、空グループでも明示的にアクティブ化できる）
   body.querySelectorAll('.lf-ghdr').forEach(ghdr => {
     ghdr.addEventListener('click', ev => {
       if (ev.target.closest('.l-act-btn,.lf-rename-inp,.lf-ghdr-grip')) return;
       const gid = ghdr.dataset.gid;
       if (_lpCollapsed.has(gid)) _lpCollapsed.delete(gid);
       else _lpCollapsed.add(gid);
-      updateListPanel();
+      S.sel = null;
+      S.activeGroupId = gid;
+      redraw();
     });
 
     // グリップ → グループDnD（合流接続）
@@ -2994,7 +3008,12 @@ function submitAddGroup() {
   const selBtn = document.querySelector('.agf-c.sel');
   const color  = selBtn ? selBtn.dataset.c : GROUP_COLORS[S.groups.length % GROUP_COLORS.length];
   document.getElementById('_agf')?.remove();
-  addGroup(label, color);
+  const gid = addGroup(label, color);
+  // 作成直後は空グループで選択中ノードもないため、そのまま記号追加の対象にする
+  S.sel = null;
+  S.activeGroupId = gid;
+  redraw();
+  setStatus(`グループ「${label}」を作成しました — このまま記号を追加できます`);
 }
 
 // ── リストパレット ───────────────────────────────
@@ -3006,26 +3025,55 @@ function shortType(t) {
 
 function buildListPalette() {
   const wrap = document.getElementById('lp-palette'); if (!wrap) return;
-  let html = '<span class="lpal-lbl"><i class="fa-solid fa-plus"></i> 記号追加</span>';
+  let html = '<span class="lpal-lbl"><i class="fa-solid fa-plus"></i> 記号追加 <span id="lpal-active-grp" class="lpal-active-grp"></span></span>';
   GROUPS.forEach((g, gi) => {
     if (gi > 0) html += '<span class="lpal-sep"></span>';
     g.types.forEach(t => {
-      html += `<button class="lpal-btn" title="${SYMS[t].name}（選択グループの末尾に追加）"
+      html += `<button class="lpal-btn" title="${SYMS[t].name}（アクティブなグループの末尾に追加）"
         onclick="addNodeFromList('${t}')">${palIcoSVG(t, 22)}</button>`;
     });
   });
   wrap.innerHTML = html;
+  _syncListPaletteActiveLabel();
+}
+
+/** リストパレットの見出しに、現在アクティブなグループ（記号追加の対象）を表示する */
+function _syncListPaletteActiveLabel() {
+  const el = document.getElementById('lpal-active-grp'); if (!el) return;
+  const gid = resolveActiveGroupId();
+  const g   = gid ? G(gid) : null;
+  el.innerHTML = g
+    ? `→ <span class="lpal-active-dot" style="background:${g.color}"></span>${esc(g.label)}`
+    : '→ グループなし';
 }
 
 function addNodeFromList(type) {
   pushUndo();
 
-  // 選択中ノードまたは最後のノードのグループを引き継ぐ
-  // （参照ノードがない＝最初の工程は無名グループに所属させる）
-  const refNode   = S.sel?.kind === 'node' ? N(S.sel.id)
-    : (S.listOrder.length ? N(S.listOrder[S.listOrder.length - 1]) : null);
-  const groupId   = refNode ? (refNode.groupId || null) : ensureDefaultGroup();
-  const prevSelId = S.sel?.kind === 'node' ? S.sel.id : (refNode?.id || null);
+  // 挿入先グループと基準ノード（位置決め・自動接続用）を決定する。
+  // ①選択中ノードがあればそのグループ
+  // ②明示的にアクティブ化されたグループ（空グループでも対象にできる）
+  // ③リスト末尾のノードのグループ（従来のフォールバック）
+  // ④無選択・無グループの最初の工程は無名グループへ
+  let groupId, refNode;
+  if (S.sel?.kind === 'node' && N(S.sel.id)) {
+    refNode = N(S.sel.id);
+    groupId = refNode.groupId || null;
+  } else if (S.activeGroupId === '__ug__') {
+    groupId = null;
+    refNode = null;
+  } else if (S.activeGroupId && G(S.activeGroupId)) {
+    groupId = S.activeGroupId;
+    const members = S.listOrder.map(id => N(id)).filter(n => n && n.groupId === groupId);
+    refNode = members[members.length - 1] || null;
+  } else if (S.listOrder.length) {
+    refNode = N(S.listOrder[S.listOrder.length - 1]);
+    groupId = refNode ? (refNode.groupId || null) : ensureDefaultGroup();
+  } else {
+    groupId = ensureDefaultGroup();
+    refNode = null;
+  }
+  const prevSelId = refNode?.id || null;
 
   // チャート上位置
   let x = 0, y = 0;
@@ -3052,7 +3100,20 @@ function addNodeFromList(type) {
 
   autoConnect(node, prevSelId);
   S.sel = { kind:'node', id:node.id };
+  // 追加後もこのグループをアクティブなまま維持する（連続追加をわかりやすくする）
+  S.activeGroupId = groupId;
+  const g = groupId ? G(groupId) : null;
+  setStatus(g ? `「${g.label}」に工程を追加しました` : '工程を追加しました（グループなし）');
   redraw();
+
+  // 追加先を一目でわかるように、該当行を一瞬ハイライトする
+  requestAnimationFrame(() => {
+    const el = document.querySelector(`.lf-item[data-nid="${node.id}"]`);
+    if (el) {
+      el.classList.add('lf-item-added');
+      setTimeout(() => el.classList.remove('lf-item-added'), 1200);
+    }
+  });
 }
 
 // ─── バッジポップオーバー ────────────────────────
@@ -3713,7 +3774,7 @@ function toggleAcc(gid) {
 
 function buildChartPalBar() {
   const bar = document.getElementById('chart-pal-bar'); if (!bar) return;
-  let html = '<span class="cpal-lbl"><i class="fa-solid fa-plus"></i> 記号追加</span>';
+  let html = '<span class="cpal-lbl"><i class="fa-solid fa-plus"></i> 記号追加 <span id="cpal-active-grp" class="lpal-active-grp"></span></span>';
   GROUPS.forEach((g, gi) => {
     if (gi > 0) html += '<span class="cpal-sep"></span>';
     g.types.forEach(t => {
@@ -3770,11 +3831,17 @@ function buildChartPalBar() {
   });
 }
 
-/** チャートパレットバーのアクティブ状態を placeType に同期 */
+/** チャートパレットバーのアクティブ状態を placeType・アクティブグループに同期 */
 function _syncChartPalBar() {
   document.querySelectorAll('.cpal-btn').forEach(btn => {
     btn.classList.toggle('cpal-placing', btn.dataset.type === placeType);
   });
+  const el = document.getElementById('cpal-active-grp'); if (!el) return;
+  const gid = resolveActiveGroupId();
+  const g   = gid ? G(gid) : null;
+  el.innerHTML = g
+    ? `→ <span class="lpal-active-dot" style="background:${g.color}"></span>${esc(g.label)}`
+    : '→ グループなし';
 }
 
 function setPlaceMode(type) {
@@ -4001,6 +4068,7 @@ function deleteGroup(gid) {
   pushUndo();
   S.nodes.forEach(n => { if (n.groupId === gid) n.groupId = null; });
   S.groups = S.groups.filter(x => x.id !== gid);
+  if (S.activeGroupId === gid) S.activeGroupId = null;
   redraw();
 }
 

@@ -3446,6 +3446,93 @@ function _attachPopOutsideClose(pop, onClose) {
   });
 }
 
+/** ボタンではなくカーソル位置を基準にポップオーバーを配置する（右クリックメニュー用） */
+function _positionPopAtPoint(pop, x, y) {
+  const pw = pop.offsetWidth  || 190;
+  const ph = pop.offsetHeight || 160;
+  let left = x, top = y;
+  if (left + pw > window.innerWidth  - 10) left = window.innerWidth  - pw - 10;
+  if (top  + ph > window.innerHeight - 10) top  = window.innerHeight - ph - 10;
+  if (left < 8) left = 8;
+  if (top  < 8) top  = 8;
+  pop.style.left = left + 'px';
+  pop.style.top  = top  + 'px';
+}
+
+// ═══════════════════════════════════════════════
+// 右クリックコンテキストメニュー（チャート編集画面）
+// ═══════════════════════════════════════════════
+
+/**
+ * チャート画面での右クリックメニュー。
+ * kind: 'node' | 'edge' | 'canvas' — 右クリック対象に応じてよく使う機能を集約する。
+ * id: node/edge のID（canvasの場合は不要）。
+ */
+function openContextMenu(ev, kind, id) {
+  _closeFloatingPop('_ctx_menu');
+  _closeFloatingPop('_group_pop');
+  _closeFloatingPop('_chart_bb_pop');
+
+  let items = [];
+
+  if (kind === 'node') {
+    const node = N(id); if (!node) return;
+    if (S.sel?.kind !== 'node' || S.sel.id !== id) { S.sel = { kind:'node', id }; redraw(); }
+    items = [
+      { label:'複製', icon:'fa-clone', action: () => duplicateNode(id) },
+      ...(node.groupId ? [{ label:'グループを複製', icon:'fa-copy', action: () => duplicateGroup(node.groupId) }] : []),
+      { sep:true },
+      { label:'グループを変更', icon:'fa-layer-group', action: (btn) => openGroupPop(id, btn) },
+      { label:'プロパティを開く', icon:'fa-sliders', action: () => openDrawer() },
+      { sep:true },
+      { label:'削除', icon:'fa-trash-can', danger:true, action: () => deleteSel() },
+    ];
+  } else if (kind === 'edge') {
+    if (S.sel?.kind !== 'edge' || S.sel.id !== id) { S.sel = { kind:'edge', id }; redraw(); }
+    items = [
+      { label:'削除', icon:'fa-trash-can', danger:true, action: () => deleteSel() },
+    ];
+  } else if (kind === 'merge') {
+    if (S.sel?.kind !== 'merge' || S.sel.id !== id) { S.sel = { kind:'merge', id }; redraw(); }
+    items = [
+      { label:'合流を解除', icon:'fa-trash-can', danger:true, action: () => deleteSel() },
+    ];
+  } else {
+    items = [
+      { label:'全体表示', icon:'fa-expand', action: () => fitView() },
+      { label:'100%表示', icon:'fa-magnifying-glass', action: () => resetView() },
+      { sep:true },
+      { label:'整列・チェック', icon:'fa-wand-magic-sparkles', action: () => alignLayout() },
+      { sep:true },
+      { label:'非表示配線を表示', icon:'fa-eye-low-vision', on:showHiddenWire, action: () => toggleHiddenWire() },
+      { label:'グループ表示', icon:'fa-tag', on:showGroupBadge, action: () => toggleGroupBadge() },
+      { label:'配置調整モード', icon:'fa-arrows-up-down-left-right', on:moveOnlyMode, action: () => toggleMoveOnlyMode() },
+    ];
+  }
+
+  const pop = document.createElement('div');
+  pop.id = '_ctx_menu'; pop.className = 'ctx-menu';
+  pop.innerHTML = items.map((it, i) => it.sep
+    ? `<div class="ctx-sep"></div>`
+    : `<button class="ctx-item${it.danger ? ' danger' : ''}${it.on ? ' on' : ''}" data-i="${i}">
+         <i class="fa-solid ${it.icon}"></i><span>${esc(it.label)}</span>
+         ${it.on ? '<i class="fa-solid fa-check" style="margin-left:auto;font-size:10px;"></i>' : ''}
+       </button>`
+  ).join('');
+  document.body.appendChild(pop);
+  _positionPopAtPoint(pop, ev.clientX, ev.clientY);
+
+  pop.querySelectorAll('.ctx-item').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const it = items[+btn.dataset.i];
+      it.action(btn); // pop除去前に実行（グループ変更ポップオーバー等がbtnの位置を参照するため）
+      pop.remove();
+    });
+  });
+  _attachPopOutsideClose(pop);
+}
+
 
 // ═══════════════════════════════════════════════
 // パレット・配置モード

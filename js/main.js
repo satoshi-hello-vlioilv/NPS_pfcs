@@ -647,6 +647,7 @@ function nearPort(wx, wy, excId) {
 
 function onNodeMD(ev) {
   if (placeType) return;
+  if (ev.button !== 0) return; // 右クリックはコンテキストメニュー用。ドラッグ/選択処理を起動しない
 
   const portEl = ev.target.closest('.ph-out');
   if (portEl) {
@@ -1080,7 +1081,18 @@ function initEvents() {
     }
   });
 
-  cvs.addEventListener('contextmenu', ev => { ev.preventDefault(); cancelPlace(); });
+  cvs.addEventListener('contextmenu', ev => {
+    ev.preventDefault();
+    cancelPlace();
+    if (currentView !== 'chart' || placeType) return;
+    const nodeEl  = ev.target.closest('.ng');
+    const edgeEl  = !nodeEl && ev.target.closest('.eg');
+    const mergeEl = !nodeEl && !edgeEl && ev.target.closest('.mg');
+    if (nodeEl)       openContextMenu(ev, 'node', nodeEl.dataset.nid);
+    else if (edgeEl)  openContextMenu(ev, 'edge', edgeEl.dataset.eid);
+    else if (mergeEl) openContextMenu(ev, 'merge', mergeEl.dataset.mid);
+    else              openContextMenu(ev, 'canvas', null);
+  });
 }
 
 /** ノードオブジェクト生成ファクトリ */
@@ -1385,20 +1397,38 @@ function _computePages(bbox) {
   ];
 }
 
-/** プレビューサムネイルを生成 */
+/**
+ * プレビューサムネイルを生成する。表示領域（.export-preview-area の実サイズ）を
+ * 実測し、ページ配置（1〜3枚は横並び、4枚は2×2）で収まる最大サイズまで
+ * サムネイルを拡大する（従来は 180×140px の固定上限だったため、モーダルを
+ * 広げても余白ばかりでプレビュー自体は小さいままだった）。
+ */
 async function _renderExportPreview() {
   const inner = document.getElementById('export-preview-inner');
+  const area  = document.getElementById('export-preview-area');
   if (!inner) return;
   inner.innerHTML = '<span class="export-preview-hint">生成中...</span>';
 
-  const dpi = 72; // プレビューは低解像度
+  const dpi = 96; // プレビュー用（拡大表示してもある程度鮮明に見える解像度）
   const margin = parseInt(document.getElementById('exp-margin')?.value || 15);
   const { pw, ph } = _a4px(dpi);
   const bbox = _getNodesBBox();
   const pages = _computePages(bbox);
-  const scale = Math.min(180 / pw, 140 / ph);
+
+  const areaRect = area ? area.getBoundingClientRect() : { width: 900, height: 700 };
+  const GAP = 16, LABEL_H = 22, OUTER_PAD = 16; // OUTER_PAD は .export-preview-area の実際の padding と一致させる
+  const cols = pages.length === 4 ? 2 : pages.length;
+  const rows = Math.ceil(pages.length / cols);
+  const availW = Math.max(240, areaRect.width  - OUTER_PAD * 2 - GAP * (cols - 1));
+  const availH = Math.max(240, areaRect.height - OUTER_PAD * 2 - GAP * (rows - 1) - LABEL_H * rows);
+  const scale  = Math.min((availW / cols) / pw, (availH / rows) / ph);
   const thumbW = Math.round(pw * scale);
   const thumbH = Math.round(ph * scale);
+
+  if (inner) {
+    inner.style.display = 'grid';
+    inner.style.gridTemplateColumns = `repeat(${cols}, ${thumbW}px)`;
+  }
 
   inner.innerHTML = '';
   for (const pg of pages) {
@@ -1406,7 +1436,7 @@ async function _renderExportPreview() {
       const blob = await _renderPageToBlob(pg.vbX, pg.vbY, pg.vbW, pg.vbH, pw, ph, margin, dpi);
       const url = URL.createObjectURL(blob);
       const wrap = document.createElement('div');
-      wrap.style.cssText = 'display:inline-block;text-align:center;';
+      wrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;';
       const img = document.createElement('img');
       img.className = 'export-page-thumb';
       img.style.cssText = `width:${thumbW}px;height:${thumbH}px;display:block;`;

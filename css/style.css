@@ -1392,6 +1392,41 @@ body{
 }
 .gpop-hint i{color:var(--mut2);}
 
+/* 右クリックコンテキストメニュー（チャート編集画面） */
+.ctx-menu{
+  position:fixed;z-index:9995;
+  min-width:190px;
+  background:var(--surf);border:1px solid var(--bdr);border-radius:11px;
+  box-shadow:var(--sh-lg),0 0 0 1px rgba(0,0,0,.04);
+  animation:pop-in .12s cubic-bezier(.16,1,.3,1);
+  overflow:hidden;
+  padding:5px;
+}
+.ctx-item{
+  display:flex;align-items:center;gap:9px;
+  width:100%;padding:7px 10px;border-radius:7px;
+  border:none;background:transparent;
+  font-size:12.5px;font-weight:600;color:var(--txt2);
+  cursor:pointer;font-family:inherit;text-align:left;
+  transition:background var(--tr),color var(--tr);
+}
+.ctx-item:hover{background:var(--acc-bg);color:var(--acc);}
+.ctx-item i{width:14px;text-align:center;color:var(--mut2);flex-shrink:0;}
+.ctx-item:hover i{color:var(--acc);}
+.ctx-item.on{background:var(--acc-bg);color:var(--acc);}
+.ctx-item.on i{color:var(--acc);}
+.ctx-item.danger{color:#b91c1c;}
+.ctx-item.danger i{color:#b91c1c;}
+.ctx-item.danger:hover{background:#fef2f2;color:#991b1b;}
+.ctx-item.danger:hover i{color:#991b1b;}
+.ctx-item:disabled{opacity:.4;cursor:not-allowed;}
+.ctx-item:disabled:hover{background:transparent;color:var(--txt2);}
+.ctx-sep{height:1px;background:var(--bdr);margin:5px 4px;}
+.ctx-label{
+  padding:6px 10px 4px;font-size:10px;font-weight:700;color:var(--mut2);
+  text-transform:uppercase;letter-spacing:.06em;
+}
+
 /* ══════════════════════════════════════════════
    空状態
    ══════════════════════════════════════════════ */
@@ -4501,8 +4536,9 @@ body:not(.lf-dnd-active) .ng[data-multisel] { cursor: move; }
   position: relative;
   background: var(--surf);
   border-radius: 16px;
-  width: min(780px, 97vw);
-  max-height: min(680px, 95vh);
+  width: min(1400px, 98vw);
+  height: min(940px, 96vh);
+  max-height: min(940px, 96vh);
   box-shadow: var(--sh-xl), 0 0 0 1px rgba(0,0,0,.04);
   display: flex;
   flex-direction: column;

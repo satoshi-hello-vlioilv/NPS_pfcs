@@ -685,8 +685,9 @@ function updateChartLegend() {
 
 /**
  * 画像保存（PNG）・印刷用に、凡例を純SVGで生成する。
- * オンスクリーンのドラッグ位置は viewBox とは無関係な画面座標のため反映できないので、
- * 各ページの左下に固定表示する。サイズ設定（legendSize）は反映する。
+ * オンスクリーンでのドラッグ位置（#cwrap内の割合）をできるだけ再現する形で
+ * 出力先ページ内の対応する位置に配置する（画面上で見えている相対位置と同じ場所に
+ * 焼き込まれるように）。サイズ設定（legendSize）も反映する。
  * @param {number} vbX ページのviewBox X（ワールド座標）
  * @param {number} vbY ページのviewBox Y
  * @param {number} vbW ページのviewBox 幅
@@ -712,7 +713,26 @@ function _legendExportSVG(vbX, vbY, vbW, vbH) {
 
   const boxW = PADX * 2 + ITEM_W * cats.length;
   const boxH = PADY + HDR_H + ROW_H;
-  const bx = vbX + 16, by = vbY + vbH - boxH - 16;
+
+  // 画面上の凡例の位置（#cwrapに対する割合）を求め、出力先ページ内の対応位置へ変換する
+  const wrap = document.getElementById('cwrap');
+  const legendEl = document.getElementById('chart-legend');
+  let fracX = 1, fracY = 0; // 取得できない場合は右上相当にフォールバック
+  if (wrap && wrap.clientWidth && wrap.clientHeight) {
+    const ew = legendEl?.offsetWidth  || 200;
+    const eh = legendEl?.offsetHeight || 44;
+    const p  = _legendPos || { x: wrap.clientWidth - ew - 14, y: 14 };
+    fracX = p.x / wrap.clientWidth;
+    fracY = p.y / wrap.clientHeight;
+  }
+  fracX = Math.max(0, Math.min(1, fracX));
+  fracY = Math.max(0, Math.min(1, fracY));
+
+  let bx = vbX + fracX * vbW;
+  let by = vbY + fracY * vbH;
+  // ページ範囲からはみ出さないようクランプする
+  bx = Math.max(vbX + 4, Math.min(bx, vbX + vbW - boxW - 4));
+  by = Math.max(vbY + 4, Math.min(by, vbY + vbH - boxH - 4));
 
   let items = '';
   cats.forEach((c, i) => {

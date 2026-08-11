@@ -178,7 +178,7 @@ function _hintPill(cx, cy, label, fill) {
     <rect x="${cx - w / 2}" y="${cy - 10}" width="${w}" height="20" rx="10"
       fill="${fill}" opacity="0.93"/>
     <text x="${cx}" y="${cy + 3.5}" text-anchor="middle"
-      font-family="'Noto Sans JP',sans-serif" font-size="10" font-weight="700"
+      font-family="${JP_FONT}" font-size="10" font-weight="700"
       fill="white">${esc(label)}</text>
   </g>`;
 }
@@ -238,7 +238,7 @@ function _insertHintSVG(target) {
     </g>`;
     // ラベル
     svg += `<text x="${mx}" y="${my + 24}" text-anchor="middle"
-      font-family="'Noto Sans JP',sans-serif" font-size="10" font-weight="700"
+      font-family="${JP_FONT}" font-size="10" font-weight="700"
       fill="var(--acc)" opacity="0.9">ここに挿入</text>`;
     // 挿入先グループのバッジ（グループ色＋名称で移動先を明示）
     const ge = _insertTargetGroup(target);
@@ -257,7 +257,7 @@ function _insertHintSVG(target) {
       <rect x="${rx + 6}" y="${n.y - 11}" width="52" height="22" rx="11"
         fill="var(--acc)" opacity="0.92"/>
       <text x="${rx + 32}" y="${n.y + 4}" text-anchor="middle"
-        font-family="'Noto Sans JP',sans-serif" font-size="10" font-weight="700"
+        font-family="${JP_FONT}" font-size="10" font-weight="700"
         fill="white">→挿入</text>
     </g>`;
     // 挿入先グループのバッジ（グループ色＋名称で移動先を明示）
@@ -1308,7 +1308,7 @@ function saveJ() {
   a.download = `NPS工程図_${getActiveChartName() || 'workspace'}.json`;
   a.click();
   URL.revokeObjectURL(a.href);
-  saveLS();
+  saveWorkspace();
 }
 
 function trigLoad() { document.getElementById('fload').click(); }
@@ -1356,7 +1356,7 @@ function loadJ(ev) {
       S._undo = []; S._redo = [];
       graphErrors = {};
       rUB(); redraw(); resetView();
-      saveLS();
+      saveWorkspace();
       // グローバル設定を復元
       if (Array.isArray(d.machineMaster) && d.machineMaster.length) machineMaster = d.machineMaster;
       if (d.capSettings) {
@@ -1376,7 +1376,7 @@ function loadJ(ev) {
 
 // ── 初期化 ───────────────────────────────────────
 
-function init() {
+async function init() {
   if (!S.meta.dt) S.meta.dt = new Date().toISOString().split('T')[0];
   const verEl = document.getElementById('app-version');
   if (verEl) verEl.textContent = 'v' + APP_VERSION;
@@ -1386,7 +1386,14 @@ function init() {
   initSidResizer();
   _loadLegendPref();
   window.addEventListener('resize', () => _applyLegendPos());
-  document.getElementById('btn-nums').classList.toggle('on', showNums);
+
+  // 自動保存は入力が続く間まとめて行う（600ms待つ）ため、直後にタブを閉じると
+  // 最後の編集が書き込まれないことがある。タブが隠れる時点で保留分を書き出す。
+  // beforeunload では非同期の書き込みが完了しないので visibilitychange を使う。
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') saveWorkspace();
+  });
+  _syncDisplayOptsUI();
 
   const wr = document.getElementById('cwrap').getBoundingClientRect();
   S.vp.tx  = wr.width  / 2;
@@ -1394,8 +1401,8 @@ function init() {
   applyVP();
   rUB();
 
-  const hasData = _loadLS();
-  _loadGlobalSettings();
+  const hasData = await _loadWorkspace();
+  await _loadGlobalSettings();
 
   // 保存済みモードに合わせてバリアントを再ロード＆ imp-mode ボタン同期
   if (W.activeId) {
@@ -1519,7 +1526,7 @@ async function _renderPageToBlob(vbX, vbY, vbW, vbH, canvasW, canvasH, marginMM,
   // フォント埋め込みのためスタイルを注入
   const styleEl = document.createElement('style');
   styleEl.textContent = `
-    text { font-family: 'Noto Sans JP', 'Hiragino Kaku Gothic Pro', sans-serif; }
+    text { font-family: ${JP_FONT}; }
     .ph { display: none; }
     .insert-hint-anim { display: none; }
     /* 非表示配線の作成中プレビュー表示は画像保存には出さない（最終出力仕様） */

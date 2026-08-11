@@ -4,8 +4,10 @@
 <meta charset="UTF-8">
 <title>NPS 工程図 エディタ</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
-<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<!-- フォント・アイコンはローカル同梱（外部CDNへ接続できない社内・工場ネットワークでも
+     アイコンや書体が崩れないようにするため）。日本語書体はOS標準フォントを使用する。 -->
+<link rel="stylesheet" href="vendor/fontawesome-subset.css">
+<link rel="stylesheet" href="vendor/ibm-plex-mono.css">
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -187,28 +189,22 @@
             <button class="tbtn icon-only" onclick="doZoom(1/1.2)" title="縮小">
               <i class="fa-solid fa-minus"></i>
             </button>
-            <span class="zdsp" id="zdsp">100%</span>
+            <button class="zdsp" id="zdsp" onclick="resetView()"
+              title="現在の表示倍率。クリックで100%に戻します">100%</button>
             <button class="tbtn icon-only" onclick="doZoom(1.2)" title="拡大">
               <i class="fa-solid fa-plus"></i>
             </button>
-            <button class="tbtn" onclick="resetView()" title="100%表示">100%</button>
             <button class="tbtn" onclick="fitView()" title="全体を画面に合わせる">
               <i class="fa-solid fa-expand"></i> 全体表示
             </button>
           </div>
           <div class="tsep"></div>
           <div class="vtb-group" title="表示切替">
-            <button class="tbtn on" id="btn-nums" onclick="toggleNums()"
-              title="加工・検査に通し番号を表示/非表示">
-              <i class="fa-solid fa-list-ol"></i> 番号表示
-            </button>
-            <button class="tbtn" id="btn-hidden-wire" onclick="toggleHiddenWire()"
-              title="起点（内製/外製）直後などの非表示配線を作成中だけ表示します。印刷・画像保存では引き続き非表示です。">
-              <i class="fa-solid fa-eye-low-vision"></i> 非表示配線
-            </button>
-            <button class="tbtn on" id="btn-group-badge" onclick="toggleGroupBadge()"
-              title="工程記号に所属グループ名のバッジを表示します">
-              <i class="fa-solid fa-tag"></i> グループ表示
+            <button class="tbtn" id="btn-display-opts" onclick="openDisplayOptionsPop(this)"
+              title="番号・グループ名バッジ・非表示配線の表示を切り替えます">
+              <i class="fa-solid fa-eye"></i> 表示
+              <span id="display-opts-count" class="tbtn-count"></span>
+              <i class="fa-solid fa-chevron-down tbtn-caret"></i>
             </button>
           </div>
           <div class="tsep"></div>
@@ -673,10 +669,10 @@
           <label class="export-lbl">向き</label>
           <div class="export-orient-row">
             <button class="export-orient-btn active" id="exp-landscape" onclick="setExportOrient('landscape')">
-              <i class="fa-solid fa-rectangle-wide"></i> 横（A4 Landscape）
+              <i class="fa-solid fa-image"></i> 横（A4 Landscape）
             </button>
             <button class="export-orient-btn" id="exp-portrait" onclick="setExportOrient('portrait')">
-              <i class="fa-solid fa-rectangle-portrait"></i> 縦（A4 Portrait）
+              <i class="fa-solid fa-file-lines"></i> 縦（A4 Portrait）
             </button>
           </div>
         </div>
@@ -915,6 +911,7 @@
 <div id="toast-host" class="toast-host"></div>
 
 <!-- ═══════ スクリプト（依存順に読み込み）═══════ -->
+<script src="js/storage.js"></script>
 <script src="js/core.js"></script>
 <script src="js/graph.js"></script>
 <script src="js/render.js"></script>

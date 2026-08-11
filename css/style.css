@@ -48,10 +48,20 @@
   /* ─ トランジション */
   --tr:       .14s ease;
   --tr-sp:    .22s cubic-bezier(.16,1,.3,1);
+
+  /* ─ 日本語書体スタック
+     以前は Google Fonts から Noto Sans JP を読み込んでいたが、外部接続が
+     遮断された社内・工場ネットワークでは書体が適用されず表示が崩れていた。
+     日本語フォントは全ウェイトを同梱すると 20MB 近くになり現実的でないため、
+     OS標準の日本語ゴシックへ順にフォールバックする。ローカルに Noto Sans JP が
+     入っている環境ではそれを優先する。 */
+  --font-jp: 'Noto Sans JP', 'Yu Gothic UI', 'Yu Gothic', YuGothic,
+             'Hiragino Sans', 'Hiragino Kaku Gothic ProN', Meiryo,
+             'MS PGothic', sans-serif;
 }
 
 body{
-  font-family:'Noto Sans JP',sans-serif;
+  font-family:var(--font-jp);
   height:100vh;display:flex;flex-direction:column;overflow:hidden;
   background:var(--bg);color:var(--txt);font-size:13px;
   -webkit-font-smoothing:antialiased;
@@ -125,12 +135,17 @@ body{
 .btn.bg-w{background:#fff;border:1.5px solid var(--bdr2);color:var(--txt2);}
 .btn.bg-w:hover{background:#f8fafc;border-color:#94a3b8;}
 
+/* 表示倍率。以前は倍率表示(span)と「100%」リセットボタンが別々に並んでいて
+   「100%」が2つ見える紛らわしい状態だったため、表示自体をリセットボタンに統合した。 */
 .zdsp{
   font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;
   background:var(--bg);padding:4px 8px;border-radius:5px;
   border:1px solid var(--bdr);min-width:52px;text-align:center;
   user-select:none;color:var(--txt2);
+  cursor:pointer;transition:background var(--tr),border-color var(--tr),color var(--tr);
 }
+.zdsp:hover{background:var(--acc-bg);border-color:var(--acc-lt);color:var(--acc-hv);}
+.zdsp:active{transform:scale(.97);}
 
 /* ══════════════════════════════════════════════
    メインレイアウト
@@ -545,7 +560,7 @@ body{
   position:fixed;pointer-events:none;z-index:9998;
   background:var(--surf);box-shadow:var(--sh-md);border-radius:7px;
   border:1px solid var(--bdr);display:none;padding:6px 12px;
-  font-size:12px;font-weight:600;font-family:'Noto Sans JP',sans-serif;
+  font-size:12px;font-weight:600;font-family:var(--font-jp);
   color:var(--txt);align-items:center;gap:8px;
 }
 #dnd-ghost.show{display:flex;}
@@ -1115,7 +1130,7 @@ body{
 .unit-preview:empty::after{
   content:'単位を選択すると表示';
   font-size:10.5px;font-weight:400;
-  font-family:'Noto Sans JP',sans-serif;
+  font-family:var(--font-jp);
   color:var(--mut2);letter-spacing:0;
 }
 
@@ -2046,7 +2061,7 @@ body{
   max-width: 240px;
   font-size: 13px;
   font-weight: 600;
-  font-family: 'Noto Sans JP', sans-serif;
+  font-family:var(--font-jp);
   border: 1.5px solid var(--acc);
   border-radius: 5px;
   padding: 2px 7px;
@@ -2188,7 +2203,7 @@ body.lf-dnd-active .lf-empty-folder { display: none; }
   background: transparent;
   font-size: 14px;            /* 読みやすい大きめサイズ */
   font-weight: 500;
-  font-family: 'Noto Sans JP', sans-serif;
+  font-family:var(--font-jp);
   width: 100%;
   padding: 2px 5px;
   border-radius: 4px;
@@ -2969,7 +2984,7 @@ body:not(.lf-dnd-active) .ng[data-multisel] { cursor: move; }
   z-index: 101;
   font-size: 11px;
   font-weight: 700;
-  font-family: 'Noto Sans JP', sans-serif;
+  font-family:var(--font-jp);
   padding: 3px 9px;
   border-radius: 10px;
   white-space: nowrap;
@@ -7494,3 +7509,13 @@ td.rm-td-chart { display: table-cell; } /* flex fallback fix */
 #cap-imp-modal { display: none; }
 #cap-imp-modal.show { display: block; }
 
+
+/* ツールバーのまとめボタン（表示オプション等）
+   個別トグルを並べるとボタンが増えて主要操作が埋もれるため、
+   1つのボタンに集約し、有効数バッジと開閉キャレットで状態を示す。 */
+.tbtn-count{
+  font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;
+  background:var(--bdr2);color:var(--txt2);
+  padding:1px 5px;border-radius:99px;line-height:1.4;
+}
+.tbtn-caret{font-size:9px !important;opacity:.55;}

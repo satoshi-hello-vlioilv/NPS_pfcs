@@ -253,7 +253,7 @@ function _badgeLabelSVG(badges, r, bottomY,
         <rect class="preview-badge-pill" x="${bx}" y="${by}" width="${pw}" height="${pillH}"
               rx="${rx}" fill="${bg}" stroke="${color}" stroke-width="${sw}"/>
         <text x="0" y="${ty0}" text-anchor="middle"
-          font-family="'Noto Sans JP',sans-serif" font-size="8" font-weight="700"
+          font-family="${JP_FONT}" font-size="8" font-weight="700"
           fill="${color}" pointer-events="none">${tspans}</text>
       </g>`;
     } else {
@@ -261,7 +261,7 @@ function _badgeLabelSVG(badges, r, bottomY,
         <rect x="${bx}" y="${by}" width="${pw}" height="${pillH}"
               rx="${rx}" fill="${bg}" stroke="${color}" stroke-width="${sw}"/>
         <text x="0" y="${ty0}" text-anchor="middle"
-          font-family="'Noto Sans JP',sans-serif" font-size="8" font-weight="700"
+          font-family="${JP_FONT}" font-size="8" font-weight="700"
           fill="${color}" pointer-events="none">${tspans}</text>
       </g>`;
     }
@@ -287,7 +287,7 @@ function _badgeLabelSVG(badges, r, bottomY,
         <rect class="preview-badge-pill" x="${bx}" y="${by}" width="${pw}" height="${PILL_H}"
               rx="${PILL_H/2}" fill="${bg}" stroke="${color}" stroke-width="${sw}"/>
         <text x="0" y="${by + PILL_H*0.73}" text-anchor="middle"
-          font-family="'Noto Sans JP',sans-serif" font-size="8" font-weight="700"
+          font-family="${JP_FONT}" font-size="8" font-weight="700"
           fill="${color}" pointer-events="none">${esc(label)}</text>
       </g>`;
     } else {
@@ -295,7 +295,7 @@ function _badgeLabelSVG(badges, r, bottomY,
         <rect x="${bx}" y="${by}" width="${pw}" height="${PILL_H}"
               rx="${PILL_H/2}" fill="${bg}" stroke="${color}" stroke-width="${sw}"/>
         <text x="0" y="${by + PILL_H*0.73}" text-anchor="middle"
-          font-family="'Noto Sans JP',sans-serif" font-size="8" font-weight="700"
+          font-family="${JP_FONT}" font-size="8" font-weight="700"
           fill="${color}" pointer-events="none">${esc(label)}</text>
       </g>`;
     }
@@ -334,12 +334,12 @@ function _nodeDecoSVG(type, label, unit, unitQty, badges, comment, r, tx,
     svg += `<rect x="${bx}" y="${LABEL_BOX_TOP}" width="${bw}" height="${LABEL_BOX_H}" rx="4"
               fill="${lbFill}" stroke="${lbColor}" stroke-width="${lsw}" filter="url(#bsh)"/>
             <text x="${tx}" y="${LABEL_BOX_TOP + 13}" text-anchor="middle"
-              font-family="'Noto Sans JP',sans-serif" font-size="10" font-weight="600"
+              font-family="${JP_FONT}" font-size="10" font-weight="600"
               fill="${lbColor}">${esc(label)}</text>`;
   } else {
     const dispLabel = sd.shortName ?? sd.name;
     svg += `<text x="${tx}" y="${r + 14}" text-anchor="middle"
-              font-family="'Noto Sans JP',sans-serif" font-size="10"
+              font-family="${JP_FONT}" font-size="10"
               fill="${sd.color}" opacity=".65" font-weight="500">${esc(dispLabel)}</text>`;
   }
 
@@ -445,7 +445,7 @@ function _groupBadgePillSVG(run) {
   return `<g pointer-events="none" transform="translate(${bx},${by})">
     <rect x="0" y="0" width="${pw}" height="${ph}" rx="7" fill="white" stroke="${g.color}" stroke-width="1" filter="url(#bsh)"/>
     <circle cx="${dotCx}" cy="7" r="3" fill="${g.color}"/>
-    <text x="${textX}" y="10.3" font-family="'Noto Sans JP',sans-serif" font-size="8.5" font-weight="700"
+    <text x="${textX}" y="10.3" font-family="${JP_FONT}" font-size="8.5" font-weight="700"
       fill="${g.color}">${esc(label)}</text>
   </g>`;
 }
@@ -552,9 +552,10 @@ function redraw() {
   updateProps();
   updateChartLegend();
   _syncLayoutModeUI();
+  _syncDisplayOptsUI();
   _syncChartPalBar();
   if (currentView === 'list') updateListPanel();
-  _scheduleLS();
+  _scheduleSave();
 }
 
 // ── チャート凡例（加工・検査・運搬・停滞の集計）─────────────
@@ -751,14 +752,14 @@ function _legendExportSVG(vbX, vbY, vbW, vbH) {
     const ix = PADX + i * ITEM_W;
     const cy = HDR_H + PADY / 2 + ROW_H / 2;
     items += `<circle cx="${ix + DOT}" cy="${cy}" r="${DOT}" fill="${c.color}"/>
-      <text x="${ix + DOT * 2 + 5}" y="${cy + FS * 0.35}" font-family="'Noto Sans JP',sans-serif"
+      <text x="${ix + DOT * 2 + 5}" y="${cy + FS * 0.35}" font-family="${JP_FONT}"
         font-size="${FS}" font-weight="600" fill="#334155">${esc(c.l)} ${c.n}</text>`;
   });
 
   return `<g pointer-events="none" transform="translate(${bx},${by})">
     <rect x="0" y="0" width="${boxW}" height="${boxH}" rx="9"
       fill="rgba(255,255,255,0.95)" stroke="#e2e8f0" stroke-width="1.3"/>
-    <text x="${PADX}" y="${HDR_H - 3 * scale}" font-family="'Noto Sans JP',sans-serif"
+    <text x="${PADX}" y="${HDR_H - 3 * scale}" font-family="${JP_FONT}"
       font-size="${HDR_FS}" font-weight="700" fill="#64748b" letter-spacing="0.6">凡例</text>
     ${items}
   </g>`;
@@ -840,7 +841,7 @@ function syncLabel(nid, val) {
   // 編集確定（blur/Enter）時に行う。
   renderNodes();
   updateProps();
-  _scheduleLS();
+  _scheduleSave();
 }
 
 function updateNP(nid, f, v) {

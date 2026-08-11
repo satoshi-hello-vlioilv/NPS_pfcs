@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════
 
 /** アプリバージョン（セマンティックバージョニング）。更新時は CHANGELOG.md も更新すること。 */
-const APP_VERSION = '1.18.1';
+const APP_VERSION = '1.19.0';
 
 const C = 20;
 
@@ -109,6 +109,15 @@ const LAYOUT_MODES = [
   { id:'custom',       label:'カスタム', icon:'fa-hand',
     desc:'現在の上下位置関係を記憶し、間隔だけを整えます（手動で動かした配置を維持）' },
 ];
+
+/**
+ * SVG内 font-family 属性に埋め込む日本語書体スタック。
+ * 画像保存・印刷ではSVGを単体で書き出すため CSS変数(--font-jp)が解決されない。
+ * そのため属性値としては実体の書体名リストを直接埋め込む必要がある。
+ * CSS側の --font-jp と内容を一致させること。
+ */
+const JP_FONT = "'Noto Sans JP','Yu Gothic UI','Yu Gothic',YuGothic,"
+              + "'Hiragino Sans','Hiragino Kaku Gothic ProN',Meiryo,'MS PGothic',sans-serif";
 
 let _uid = 1;
 const uid = () => 'u' + (_uid++);
@@ -401,7 +410,7 @@ function setChartBackbone(cid, gid) {
   }
   c.backboneGroupId = bid; // トップレベル（バリアントなしチャート・互換フォールバック用）
   if (cid === W.activeId) S.backboneGroupId = bid;
-  saveLS();
+  saveWorkspace();
   if (currentView === 'list')     { _updateBackboneHint(); updateListPanel(); }
   if (currentView === 'routemap') updateRouteMap();
   setStatus(gid ? '背骨グループを設定しました' : '背骨グループを自動設定に戻しました');
@@ -662,40 +671,89 @@ function computeRouteMapTables(chartIds, groupSel, allGroups) {
   return { tables };
 }
 
-// ── LocalStorage 自動保存（V3 ワークスペース形式）────
+// ── 自動保存（V3 ワークスペース形式 / IndexedDB）────
+//
+// 保存先は IndexedDB（js/storage.js）。localStorage は容量約5MBで
+// 工程図が増えると保存に失敗しうるため移行した。旧データは初回起動時に
+// 自動で引き継ぐ（_loadWorkspace 内のマイグレーション処理を参照）。
 
-const LS_KEY = 'nps_workspace_v3';
+const WS_KEY = 'workspace_v3';
+const LS_KEY = 'nps_workspace_v3';   // 旧localStorageキー（移行元としてのみ参照）
 
-function saveLS() {
-  try {
-    syncActiveChart();
-    localStorage.setItem(LS_KEY, JSON.stringify({
-      charts: W.charts, activeId: W.activeId, uid: _uid,
-    }));
-  } catch (_) {}
+/** 現在のワークスペースを保存用のプレーンなオブジェクトにする */
+function _workspaceSnapshot() {
+  syncActiveChart();
+  // IndexedDB は構造化複製で保存するため、Proxy等が混ざらないよう一度JSONを通す
+  return JSON.parse(JSON.stringify({ charts: W.charts, activeId: W.activeId, uid: _uid }));
 }
 
-function _loadLS() {
+/**
+ * 保存を実行し、完了を待てる Promise を返す。
+ * テストや「閉じる直前に確実に書き込みたい」場面から使う。
+ * @returns {Promise<boolean>} 成功したら true
+ */
+async function saveNow() {
+  clearTimeout(_saveTimer);
+  try {
+    await idbSet(WS_KEY, _workspaceSnapshot());
+    return true;
+  } catch (err) {
+    _reportStorageError(err);
+    return false;
+  }
+}
+
+/**
+ * 保存を要求する（完了を待たない）。
+ * 呼び出し側は同期的に書けるので、既存の呼び出し箇所をそのまま使える。
+ */
+function saveWorkspace() { void saveNow(); }
+
+let _saveTimer = null;
+/** 連続操作でまとめて保存されるよう、少し待ってから保存する */
+function _scheduleSave() {
+  clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(saveWorkspace, 600);
+}
+
+/** 読み込んだワークスペースを S / W に反映する */
+function _applyWorkspace(d) {
+  if (!d || !Array.isArray(d.charts) || !d.charts.length) return false;
+  W.charts   = d.charts;
+  W.activeId = d.activeId || d.charts[0].id;
+  if (d.uid) _uid = Math.max(_uid, d.uid);
+  const active = W.charts.find(c => c.id === W.activeId) || W.charts[0];
+  W.activeId = active.id;
+  loadChartIntoS(active);
+  return true;
+}
+
+/**
+ * 保存済みワークスペースを読み込む。
+ * IndexedDB → 旧localStorage(V3) → さらに旧のV2単一工程図、の順に探す。
+ * @returns {Promise<boolean>} 実データ（工程が1件以上）があれば true
+ */
+async function _loadWorkspace() {
   let loaded = false;
 
-  // V3: ワークスペース形式
+  // ① IndexedDB（現行）
   try {
-    const raw = localStorage.getItem(LS_KEY);
-    if (raw) {
-      const d = JSON.parse(raw);
-      if (Array.isArray(d.charts) && d.charts.length) {
-        W.charts   = d.charts;
-        W.activeId = d.activeId || d.charts[0].id;
-        if (d.uid) _uid = Math.max(_uid, d.uid);
-        const active = W.charts.find(c => c.id === W.activeId) || W.charts[0];
-        W.activeId = active.id;
-        loadChartIntoS(active);
-        loaded = true;
-      }
-    }
-  } catch (_) {}
+    loaded = _applyWorkspace(await idbGet(WS_KEY));
+  } catch (_) { /* 未対応環境などは以降のフォールバックに任せる */ }
 
-  // V2: 単一工程図形式からマイグレーション
+  // ② localStorage V3 からの移行（旧バージョンで作られたデータ）
+  if (!loaded) {
+    try {
+      const raw = localStorage.getItem(LS_KEY);
+      if (raw && _applyWorkspace(JSON.parse(raw))) {
+        loaded = true;
+        // IndexedDB 側へ移し、成功したら旧データは消す（二重管理を避ける）
+        try { await idbSet(WS_KEY, _workspaceSnapshot()); localStorage.removeItem(LS_KEY); } catch (_) {}
+      }
+    } catch (_) {}
+  }
+
+  // ③ V2: 単一工程図形式からのマイグレーション
   if (!loaded) {
     try {
       const raw = localStorage.getItem('nps_chart_v2');
@@ -713,6 +771,7 @@ function _loadLS() {
           if (d.uid) _uid = Math.max(_uid, d.uid);
           loadChartIntoS(W.charts[0]);
           loaded = true;
+          try { await idbSet(WS_KEY, _workspaceSnapshot()); } catch (_) {}
         }
       }
     } catch (_) {}
@@ -729,14 +788,7 @@ function _loadLS() {
   }
 
   // データが実質的に空（すべての工程図でノードが0件）の場合は false を返す
-  const hasData = W.charts.some(c => Array.isArray(c.nodes) && c.nodes.length > 0);
-  return hasData;
-}
-
-let _lsTimer = null;
-function _scheduleLS() {
-  clearTimeout(_lsTimer);
-  _lsTimer = setTimeout(saveLS, 600);
+  return W.charts.some(c => Array.isArray(c.nodes) && c.nodes.length > 0);
 }
 
 // ── 無名グループ（グループ未指定工程の受け皿）─────
@@ -891,21 +943,42 @@ function setImprovementMode(mode) {
   if (currentView === 'capacity') updateCapacityView();
 }
 
+// 機械マスタは台数が増えるとそれなりの量になるため、工程図と同じく IndexedDB に保存する。
+const GLOBAL_KEY = 'global_v1';
+
+/** 全体設定（改善モード・機械マスタ・能力表設定）を保存する（完了は待たない） */
 function _saveGlobalSettings() {
-  try {
-    localStorage.setItem(IMP_KEY, JSON.stringify({ improvementMode, machineMaster, capSettings }));
-  } catch (_) {}
+  const data = JSON.parse(JSON.stringify({ improvementMode, machineMaster, capSettings }));
+  idbSet(GLOBAL_KEY, data).catch(_reportStorageError);
 }
 
-function _loadGlobalSettings() {
-  try {
-    const raw = localStorage.getItem(IMP_KEY);
-    if (raw) {
-      const d = JSON.parse(raw);
-      if (d.improvementMode) improvementMode = d.improvementMode;
-      if (Array.isArray(d.machineMaster) && d.machineMaster.length) machineMaster = d.machineMaster;
-      if (d.capSettings) { capSettings.operatingTime = d.capSettings.operatingTime ?? capSettings.operatingTime; capSettings.targetQty = d.capSettings.targetQty ?? capSettings.targetQty; capSettings.groupOverrides = d.capSettings.groupOverrides ?? {}; }
-    }
-  } catch (_) {}
+function _applyGlobalSettings(d) {
+  if (!d) return false;
+  if (d.improvementMode) improvementMode = d.improvementMode;
+  if (Array.isArray(d.machineMaster) && d.machineMaster.length) machineMaster = d.machineMaster;
+  if (d.capSettings) {
+    capSettings.operatingTime  = d.capSettings.operatingTime ?? capSettings.operatingTime;
+    capSettings.targetQty      = d.capSettings.targetQty     ?? capSettings.targetQty;
+    capSettings.groupOverrides = d.capSettings.groupOverrides ?? {};
+  }
+  return true;
+}
+
+async function _loadGlobalSettings() {
+  let loaded = false;
+  try { loaded = _applyGlobalSettings(await idbGet(GLOBAL_KEY)); } catch (_) {}
+
+  // 旧localStorageからの移行（成功したら旧データは削除して二重管理を避ける）
+  if (!loaded) {
+    try {
+      const raw = localStorage.getItem(IMP_KEY);
+      if (raw && _applyGlobalSettings(JSON.parse(raw))) {
+        try {
+          await idbSet(GLOBAL_KEY, JSON.parse(JSON.stringify({ improvementMode, machineMaster, capSettings })));
+          localStorage.removeItem(IMP_KEY);
+        } catch (_) {}
+      }
+    } catch (_) {}
+  }
   if (!machineMaster.length) machineMaster = DEFAULT_MACHINE_MASTER.map(m => ({ ...m }));
 }

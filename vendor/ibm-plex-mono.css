@@ -1,0 +1,28 @@
+/*!
+ * IBM Plex Mono (latin subset) — https://github.com/IBM/plex
+ * License: SIL Open Font License 1.1
+ *
+ * 通し番号・倍率表示など、桁を揃えたい数字に使用する等幅書体。
+ * ラテン文字のみのサブセットなので4ウェイト合計でも約60KBと軽い。
+ * 外部CDNへ接続できない環境でも表示が崩れないようローカルに同梱している。
+ */
+@font-face{
+  font-family:'IBM Plex Mono';
+  font-style:normal;font-weight:400;font-display:swap;
+  src:url(webfonts/ibm-plex-mono-400.woff2) format('woff2');
+}
+@font-face{
+  font-family:'IBM Plex Mono';
+  font-style:normal;font-weight:500;font-display:swap;
+  src:url(webfonts/ibm-plex-mono-500.woff2) format('woff2');
+}
+@font-face{
+  font-family:'IBM Plex Mono';
+  font-style:normal;font-weight:600;font-display:swap;
+  src:url(webfonts/ibm-plex-mono-600.woff2) format('woff2');
+}
+@font-face{
+  font-family:'IBM Plex Mono';
+  font-style:normal;font-weight:700;font-display:swap;
+  src:url(webfonts/ibm-plex-mono-700.woff2) format('woff2');
+}

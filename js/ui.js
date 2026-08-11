@@ -1889,7 +1889,7 @@ function saveCapImpModal() {
       if (node) node.improvement = { before: { ..._capImpBefore }, after: { ..._capImpAfter } };
     }
   }
-  saveLS();
+  saveWorkspace();
   updateCapacityView();
   closeCapImpModal();
 }
@@ -1958,7 +1958,7 @@ function deleteMachine(id) {
   }
   _renderMachineTable();
   _saveGlobalSettings();
-  saveLS();
+  saveWorkspace();
 }
 
 // ═══════════════════════════════════════════════
@@ -1972,7 +1972,7 @@ function openGroupMasterModal() {
 
 function closeGroupMasterModal() {
   document.getElementById('group-master-modal').classList.remove('show');
-  saveLS();
+  saveWorkspace();
   if (currentView === 'capacity') updateCapacityView();
 }
 
@@ -2013,7 +2013,7 @@ function assignMachineToGroup(gid, mid) {
     const cg = (W.charts[ci].groups || []).find(x => x.id === gid);
     if (cg) cg.assignedMachineId = mid || null;
   }
-  saveLS();
+  saveWorkspace();
 }
 
 // ═══════════════════════════════════════════════
@@ -2288,7 +2288,7 @@ function _lfChartSectionHTML(chart, isActive) {
         .map(n => _lfItemHTMLCompact(n, nums, chart.id)).join('');
       bodyHTML = `<div class="lf-chart-body" data-cid="${chart.id}">
         <div class="lf-cross-drop-zone" data-cid="${chart.id}">
-          <i class="fa-solid fa-arrow-down-to-line"></i>
+          <i class="fa-solid fa-download"></i>
           ここにドロップして「${esc(chart.name)}」に転送
         </div>
         ${items || '<div class="lp-empty-chart"><i class="fa-solid fa-inbox"></i> 空の工程図</div>'}
@@ -2480,7 +2480,7 @@ function addNewChartFromList() {
   if (prevId) _lpChartCollapsed.add(prevId);
   _lpChartCollapsed.delete(id);
   _lpChartInitDone = true;
-  rUB(); saveLS();
+  rUB(); saveWorkspace();
   updateListPanel();
   setStatus('新規工程図を作成しました');
 }
@@ -2506,7 +2506,7 @@ function _lfUpdateMeta(cid, isActiveStr, key, value) {
     c.meta = c.meta || {};
     c.meta[key] = value;
   }
-  saveLS();
+  saveWorkspace();
 }
 
 /** リストビューのチャート名インライン変更 */
@@ -2522,7 +2522,7 @@ function _lfRenameChart(cid, el) {
     if (v && v !== c.name) {
       c.name = v;
       if (cid === W.activeId) _updateActiveChartDisplay();
-      saveLS();
+      saveWorkspace();
     }
     updateListPanel();
   };
@@ -2579,7 +2579,7 @@ function _crossChartTransfer(nodeId, targetChartId) {
   tgt.listOrder = [...(tgt.listOrder || []), nodeId];
 
   syncActiveChart();
-  saveLS();
+  saveWorkspace();
   redraw();
   updateListPanel();
   setStatus(`「${esc(node.label || SYMS[node.type]?.name || '')}」を「${esc(tgt.name)}」に転送しました`);
@@ -3075,11 +3075,18 @@ function addNodeFromList(type) {
   }
   const prevSelId = refNode?.id || null;
 
-  // チャート上位置
-  let x = 0, y = 0;
+  // チャート上位置。既定は他グループの先頭と同じ左端（_layoutRows の LEFT_MARGIN と揃える）。
+  let x = C * 3, y = 0;
   if (refNode) {
+    // 同グループに既存工程があれば、その右隣に並べる
     x = refNode.x + SYMS[refNode.type].r + SYMS[type].r + C * 3;
     y = refNode.y;
+  } else if (S.nodes.length) {
+    // 空グループへの初回追加: 基準にできる工程が無い。
+    // y=0 のままだと背骨の行に重なって描画されてしまうため、
+    // 既存のどの行とも重ならないよう一番下の行のさらに下へ置く。
+    // 正規の位置へは次回の「整列・チェック」で移動する。
+    y = Math.max(...S.nodes.map(n => n.y)) + C * 14;
   }
 
   const node   = mkNode(type, snapV(x), snapV(y));
@@ -3514,7 +3521,7 @@ function loadSampleData() {
   redraw();
   resetView();
   _saveGlobalSettings();
-  saveLS();
+  saveWorkspace();
   setStatus('サンプルを読み込みました — 右上「改善前/改善後」で工程図の構造変化を確認できます');
 }
 
@@ -3979,21 +3986,75 @@ function clearAll() {
   _routemapGroupSel.clear();
   _routemapExpanded.clear();
   _updateActiveChartDisplay();
-  saveLS();
+  saveWorkspace();
   redraw();
   showWelcome();
 }
 
+// ─── 表示オプション ────────────────────────────────
+// 番号・グループ名バッジ・非表示配線の3つの切り替えは、常時ツールバーに
+// 並べるとボタンが多くなり主要操作が埋もれるため、1つのメニューにまとめている。
+
+const DISPLAY_OPTIONS = [
+  { id:'nums',   icon:'fa-list-ol',       label:'番号表示',
+    desc:'加工・検査に通し番号を表示します',
+    get:() => showNums,       toggle:() => toggleNums() },
+  { id:'group',  icon:'fa-tag',           label:'グループ名バッジ',
+    desc:'工程記号に所属グループ名を表示します',
+    get:() => showGroupBadge, toggle:() => toggleGroupBadge() },
+  { id:'hidden', icon:'fa-eye-low-vision', label:'非表示配線',
+    desc:'起点直後などの隠れた配線を編集中だけ表示します（印刷・画像保存では非表示のまま）',
+    get:() => showHiddenWire, toggle:() => toggleHiddenWire() },
+];
+
+function openDisplayOptionsPop(btn) {
+  _closeFloatingPop('_display_opts_pop');
+  const pop = document.createElement('div');
+  pop.id = '_display_opts_pop'; pop.className = 'fl-pop layout-mode-pop';
+  pop.innerHTML = `
+    <div class="fl-pop-hdr"><i class="fa-solid fa-eye"></i> 表示オプション</div>
+    ${DISPLAY_OPTIONS.map(o => {
+      const on = o.get();
+      return `<button class="lmpop-item${on ? ' active' : ''}" data-opt="${o.id}">
+        <i class="fa-solid ${o.icon} lmpop-icon"></i>
+        <span class="lmpop-text">
+          <span class="lmpop-label">${esc(o.label)}</span>
+          <span class="lmpop-desc">${esc(o.desc)}</span>
+        </span>
+        ${on ? '<i class="fa-solid fa-check gpop-check"></i>' : ''}
+      </button>`;
+    }).join('')}`;
+  document.body.appendChild(pop);
+  _positionPop(pop, btn);
+  pop.querySelectorAll('.lmpop-item').forEach(item => {
+    item.addEventListener('click', ev => {
+      ev.stopPropagation();
+      DISPLAY_OPTIONS.find(o => o.id === item.dataset.opt)?.toggle();
+      // 続けて切り替えられるよう開いたまま表示だけ更新する
+      pop.remove();
+      openDisplayOptionsPop(btn);
+    });
+  });
+  _attachPopOutsideClose(pop);
+}
+
+/** ツールバーの「表示」ボタンに、有効な表示オプション数を反映する（redraw から呼ばれる） */
+function _syncDisplayOptsUI() {
+  const el = document.getElementById('display-opts-count');
+  if (!el) return;
+  const on = DISPLAY_OPTIONS.filter(o => o.get()).length;
+  el.textContent = `${on}/${DISPLAY_OPTIONS.length}`;
+}
+
 function toggleNums() {
   showNums = !showNums;
-  document.getElementById('btn-nums').classList.toggle('on', showNums);
   redraw();
 }
 
 /** 起点直後などの非表示配線（最終出力では隠れる線）を作成中だけ可視化するモードを切り替える */
 function toggleHiddenWire() {
   showHiddenWire = !showHiddenWire;
-  document.getElementById('btn-hidden-wire').classList.toggle('on', showHiddenWire);
+  _syncDisplayOptsUI();
   renderEdges();
   bindEdgeEv(); // renderEdges() は要素を作り直すだけでイベントを再バインドしないため必要
   setStatus(showHiddenWire
@@ -4013,7 +4074,7 @@ function toggleMoveOnlyMode() {
 /** チャート上の工程記号に所属グループ名バッジを表示するかどうかを切り替える */
 function toggleGroupBadge() {
   showGroupBadge = !showGroupBadge;
-  document.getElementById('btn-group-badge').classList.toggle('on', showGroupBadge);
+  _syncDisplayOptsUI();
   renderNodes();
   setStatus(showGroupBadge ? 'グループ名バッジを表示中' : 'グループ名バッジの表示をオフにしました');
 }
@@ -4251,7 +4312,7 @@ function startRenameChart(cid, el) {
     if (v && v !== c.name) { 
       c.name = v; 
       if (cid === W.activeId) _updateActiveChartDisplay(); 
-      saveLS(); 
+      saveWorkspace(); 
     }
     // 各ビューでデータ連動（経路図の表示更新）
     if (currentView === 'routemap') updateRouteMap();
@@ -4271,7 +4332,7 @@ function addNewChart() {
   loadChartIntoS(W.charts[W.charts.length - 1]);
   _updateActiveChartDisplay();
   _routemapSelected.add(id);  // 新規工程図は経路図に自動追加
-  rUB(); saveLS();
+  rUB(); saveWorkspace();
   updateChartsPanel();
   // 名前変更モードを自動起動（ルートマップサイドバーのカード名要素）
   requestAnimationFrame(() => {
@@ -4309,7 +4370,7 @@ function duplicateChart(cid) {
   copy.backboneGroupId = copy.backboneGroupId ? (gidMap[copy.backboneGroupId] || null) : null;
 
   W.charts.push(copy);
-  saveLS();
+  saveWorkspace();
   updateChartsPanel();
   setStatus(`「${src.name}」を複製しました`);
 }
@@ -4328,7 +4389,7 @@ function deleteChart(cid) {
     if (other) { W.activeId = other.id; loadChartIntoS(other); _updateActiveChartDisplay(); rUB(); redraw(); }
   }
   W.charts = W.charts.filter(x => x.id !== cid);
-  saveLS();
+  saveWorkspace();
 
   // ビューに応じてパネル・テーブルを正しく更新
   if (currentView === 'routemap')    updateRouteMap();   // カード + テーブル両方更新

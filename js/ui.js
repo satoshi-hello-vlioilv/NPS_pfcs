@@ -3102,6 +3102,9 @@ function addNodeFromList(type) {
   S.sel = { kind:'node', id:node.id };
   // 追加後もこのグループをアクティブなまま維持する（連続追加をわかりやすくする）
   S.activeGroupId = groupId;
+  // 折りたたみ中のグループへ追加した場合は展開する。
+  // そうしないと追加した行が画面に現れず「追加されていない」と誤解される。
+  _lpCollapsed.delete(groupId || '__ug__');
   const g = groupId ? G(groupId) : null;
   setStatus(g ? `「${g.label}」に工程を追加しました` : '工程を追加しました（グループなし）');
   redraw();
@@ -3227,8 +3230,9 @@ function openLayoutModePop(btn) {
 /** 自動配置パターンを切り替え、即座に再整列して結果を反映する */
 function setLayoutMode(mode) {
   if (!LAYOUT_MODES.some(m => m.id === mode)) return;
-  S.layoutMode = mode;
-  alignLayout();
+  // モードの切り替えは alignLayout 内（pushUndo の後）で行わせる。
+  // ここで先に S.layoutMode を書き換えると undo が座標だけ戻す状態になる。
+  alignLayout(mode);
 }
 
 /** 現在の S.layoutMode をツールバーボタンの表示に反映する（redraw から呼ばれる） */
@@ -3963,7 +3967,11 @@ function clearAll() {
   W.activeId        = newId;
   S.meta            = { ...emptyMeta };
   S.nodes           = []; S.edges = []; S.groups = []; S.listOrder = []; S.sel = null;
+  // merges を消し忘れると、削除済みノードを指す合流設定が残ったまま保存され続ける
+  S.merges          = [];
   S.backboneGroupId = null;
+  S.activeGroupId   = null;
+  S.layoutMode      = 'balance';
   _lpCollapsed.clear();
   _lpChartCollapsed.clear();
   _lpChartInitDone  = false;

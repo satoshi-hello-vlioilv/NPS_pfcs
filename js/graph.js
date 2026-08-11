@@ -286,35 +286,61 @@ function _packRowsIntoTracks(rows, nodeXMap) {
 }
 
 /**
- * 合流接続を持つ行を、合流先ポートのX座標（背骨に近い側からの距離の目安）が
- * 小さい順に並べ替える。
+ * 合流を持つグループの「合流の深さ」を返す。
+ * 背骨へ直接合流するグループが1、その枝へさらに合流する孫グループが2…となる。
+ * 合流を持たないグループ（独立グループ・背骨）は0。
+ * 不正データで合流が循環していても無限ループしないよう、たどった数で打ち切る。
+ */
+function _mergeDepth(groupId) {
+  let depth = 0;
+  let gid = groupId;
+  const seen = new Set();
+  while (gid != null && !seen.has(gid)) {
+    seen.add(gid);
+    const m = getMergeBySubGroup(gid);
+    if (!m) break;
+    const tgt = N(m.targetNodeId);
+    if (!tgt) break;
+    depth++;
+    gid = tgt.groupId;
+  }
+  return depth;
+}
+
+/**
+ * 枝葉グループの行を、背骨に近い側から順に詰めるべき順序へ並べ替える。
+ * この順序で _packRowsIntoTracks に渡すことで、合流線が他グループの箱を
+ * 横切って交差するのを防ぐ。
  *
- * 合流線は「行内の末端ノード右ポート → 合流先ノードの上/下ポート」という経路で
- * 描かれ、末端ノードは _layoutRows の逆算処理により合流先のほぼ真下/真上
- * （X座標がほぼ一致する位置）に配置される。つまり各行の合流線は、その行の
- * 合流先X座標付近を通る縦線としてほぼ近似できる。
+ * 並べ替えの基準は次の2段階:
  *
- * ここで行を合流先Xの昇順に並べてから _packRowsIntoTracks に渡すと、
- * 先に処理される行（＝背骨に近いトラックに割り当てられる行）の合流先Xは、
- * 後から処理される行の合流先Xより必ず小さくなる。各行の占有範囲は
- * 「合流先X座標を右端とし、そこから左へノード幅ぶん伸びる区間」に相当するため、
- * 後続の行の合流先X（＝その行の縦線の位置）は先行する行の占有範囲より
- * 必ず右側＝範囲外となり、縦線が手前のトラックの箱を横切ることがなくなる。
- * 枝葉グループ同士の合流線が交差して見える不具合を防ぐための整列順。
+ * ① 合流の深さ（昇順）— 構造上の制約。
+ *    孫グループ（別の枝へ合流するグループ）の合流線は、合流先である親の枝の
+ *    行まで必ず届かせる必要がある。したがって孫は親より外側になければならず、
+ *    深さの浅いものから内側へ詰める。
+ *
+ * ② 同じ深さ内では合流先ノードのX座標（昇順）— 幾何的な制約。
+ *    合流線は「行内の末端ノード右ポート → 合流先ノードの上/下ポート」の経路で
+ *    描かれ、末端ノードは _layoutRows の逆算処理により合流先のほぼ真下/真上
+ *    （X座標がほぼ一致する位置）へ配置される。つまり各行の合流線は、その行の
+ *    合流先X座標付近を通る縦線として近似できる。合流先Xの昇順に詰めると、
+ *    各行の占有範囲は「合流先Xを右端として左へ伸びる区間」に相当するため、
+ *    後続の行の縦線は先行する行の占有範囲より必ず右側＝範囲外となり、
+ *    内側トラックの箱を横切らない。
  *
  * @param {Array<{groupId:string|null, nodes:object[]}>} rows
  * @param {Object<string,number>} nodeXMap
- * @returns {Array} 合流先X昇順に並べ替えた rows（合流を持たない行は末尾へ、元の順序を維持）
+ * @returns {Array} 並べ替えた rows（判定不能な行は末尾へ、元の順序を維持）
  */
-function _sortRowsByMergeAttachX(rows, nodeXMap) {
+function _sortRowsForTrackPacking(rows, nodeXMap) {
   const attachX = row => {
     const m = getMergeBySubGroup(row.groupId);
-    if (!m) return Infinity; // 合流なし（このケースは実質発生しないが安全側でフォールバック）
+    if (!m) return Infinity; // 合流なし（独立グループ等）は末尾へ
     const x = nodeXMap[m.targetNodeId];
     return x == null ? Infinity : x;
   };
-  return rows.map((row, i) => ({ row, i, x: attachX(row) }))
-    .sort((a, b) => (a.x - b.x) || (a.i - b.i))
+  return rows.map((row, i) => ({ row, i, d: _mergeDepth(row.groupId), x: attachX(row) }))
+    .sort((a, b) => (a.d - b.d) || (a.x - b.x) || (a.i - b.i))
     .map(e => e.row);
 }
 
@@ -493,12 +519,13 @@ function _orderGroupsForLayout(grouped, nodeXMap, mode) {
   }
 
   // 上側・下側の各カテゴリ内で、X方向に重ならない行同士を同じ高さへ詰める。
-  // 枝葉行は合流先X昇順（＝背骨に近い側から）に処理することで、後続行の合流線が
-  // 手前のトラックに積まれた行の箱を横切らないようにする（安全側の配置）。
+  // 枝葉行は「合流の深さ→合流先X」の順（＝背骨に近い側から少しずつ外側へ）に
+  // 処理することで、後続行の合流線が手前のトラックに積まれた行の箱を
+  // 横切らないようにする（安全側の配置）。
   const aboveBranchTrackOf = _packRowsIntoTracks(
-    _sortRowsByMergeAttachX(aboveBranches.flatMap(b => b.rows), nodeXMap), nodeXMap);
+    _sortRowsForTrackPacking(aboveBranches.flatMap(b => b.rows), nodeXMap), nodeXMap);
   const belowBranchTrackOf = _packRowsIntoTracks(
-    _sortRowsByMergeAttachX(belowBranches.flatMap(b => b.rows), nodeXMap), nodeXMap);
+    _sortRowsForTrackPacking(belowBranches.flatMap(b => b.rows), nodeXMap), nodeXMap);
   const aboveIndepTrackOf  = _packRowsIntoTracks(aboveIndeps, nodeXMap);
   const belowIndepTrackOf  = _packRowsIntoTracks(belowIndeps, nodeXMap);
   const aboveBranchCount = aboveBranchTrackOf.size ? Math.max(...aboveBranchTrackOf.values()) + 1 : 0;
@@ -759,8 +786,15 @@ function validateGraph() {
 
 // ── 整列・チェック ──────────────────────────────
 
-function alignLayout() {
+/**
+ * 記号間隔を整列し、ルールチェックを行う。
+ * @param {string} [newMode] 指定時は配置パターンも切り替える。
+ *   モード変更は pushUndo の「後」に行う必要がある（先に変えると変更後のモードが
+ *   スナップショットに入り、undo しても座標だけ戻ってモード表示と食い違うため）。
+ */
+function alignLayout(newMode) {
   pushUndo();
+  if (newMode) S.layoutMode = newMode;
   // リストモードの並び順と完全に同一のルール（NODE_GAP=C）でX/Y両軸を再計算する。
   // buildChartFromList と同じ配置結果になる（既存のエッジは保持）。
   syncChartFromListOrder();

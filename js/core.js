@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════
 
 /** アプリバージョン（セマンティックバージョニング）。更新時は CHANGELOG.md も更新すること。 */
-const APP_VERSION = '1.18.0';
+const APP_VERSION = '1.18.1';
 
 const C = 20;
 
@@ -162,6 +162,8 @@ function ss() {
     groups:          JSON.parse(JSON.stringify(S.groups ||[])),
     listOrder:[...S.listOrder],
     backboneGroupId: S.backboneGroupId || null,
+    layoutMode:      S.layoutMode || 'balance',
+    activeGroupId:   S.activeGroupId || null,
   };
 }
 
@@ -194,6 +196,10 @@ function applyState(s) {
   S.groups          = s.groups    ||[];
   S.listOrder       = s.listOrder ||[];
   S.backboneGroupId = s.backboneGroupId || null;
+  // 配置パターンもノード座標と同時に巻き戻す。片方だけ戻すと
+  // ボタン表示（例: 上配置）と実際の配置が食い違って見えるため。
+  S.layoutMode      = s.layoutMode || 'balance';
+  S.activeGroupId   = s.activeGroupId || null;
   S.sel             = null;
   graphErrors       = {};
   redraw();

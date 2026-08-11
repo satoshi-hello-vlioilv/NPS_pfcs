@@ -3276,6 +3276,83 @@ function closeGuideModal() {
   document.getElementById('guide-modal').classList.remove('show');
 }
 
+// ─── 改訂履歴 ──────────────────────────────────
+// 履歴データ(js/changelog.js)は CHANGELOG.md から自動生成している。
+// 内容を変えるときは CHANGELOG.md を編集して npm run build:changelog を実行すること。
+
+/**
+ * CHANGELOG中の簡易マークダウン（**強調** と `コード`）をHTMLにする。
+ * 先に esc() でエスケープしてから変換するため、履歴本文のHTMLは実行されない。
+ */
+function _clInline(text) {
+  return esc(text)
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>');
+}
+
+/** バージョン文字列を比較用の数値配列にする（例 '1.19.0' → [1,19,0]） */
+function _verParts(v) {
+  return String(v).split('.').map(n => parseInt(n, 10) || 0);
+}
+
+/**
+ * セマンティックバージョニングのどの桁が上がったかを返す。
+ * 直前のバージョンとの差分から判定し、履歴上で変更の大きさを示すのに使う。
+ */
+function _verKind(version, prevVersion) {
+  if (!prevVersion) return { label: 'メジャー', cls: 'major' };
+  const [a, b] = [_verParts(version), _verParts(prevVersion)];
+  if (a[0] !== b[0]) return { label: 'メジャー', cls: 'major' };
+  if (a[1] !== b[1]) return { label: 'マイナー', cls: 'minor' };
+  return { label: 'パッチ', cls: 'patch' };
+}
+
+function openChangelogModal() {
+  const body = document.getElementById('chg-body');
+  const cur  = document.getElementById('chg-current-ver');
+  if (!body) return;
+
+  if (cur) cur.textContent = 'ver' + APP_VERSION;
+
+  const list = (typeof CHANGELOG !== 'undefined' && Array.isArray(CHANGELOG)) ? CHANGELOG : [];
+  if (!list.length) {
+    body.innerHTML = '<div class="chg-empty"><i class="fa-solid fa-circle-info"></i> 改訂履歴を読み込めませんでした</div>';
+  } else {
+    body.innerHTML = list.map((v, i) => {
+      const kind      = _verKind(v.version, list[i + 1]?.version);
+      const isCurrent = v.version === APP_VERSION;
+      // 項目は level 0 が通常、level 1 がその詳細。ネストを保って表示する。
+      let items = '', open = false;
+      for (const it of v.items) {
+        if (it.level === 0) {
+          if (open) { items += '</ul>'; open = false; }
+          items += `<li class="chg-item">${_clInline(it.text)}`;
+        } else {
+          if (!open) { items += '<ul class="chg-sub">'; open = true; }
+          items += `<li>${_clInline(it.text)}</li>`;
+        }
+      }
+      if (open) items += '</ul>';
+
+      return `<section class="chg-ver${isCurrent ? ' chg-ver-current' : ''}">
+        <div class="chg-ver-hdr">
+          <span class="chg-ver-num">ver${esc(v.version)}</span>
+          <span class="chg-ver-kind chg-kind-${kind.cls}">${kind.label}</span>
+          ${isCurrent ? '<span class="chg-ver-badge">使用中</span>' : ''}
+        </div>
+        <ul class="chg-items">${items}</ul>
+      </section>`;
+    }).join('');
+  }
+
+  document.getElementById('changelog-modal').classList.add('show');
+  body.scrollTop = 0;
+}
+
+function closeChangelogModal() {
+  document.getElementById('changelog-modal').classList.remove('show');
+}
+
 /** サンプルデータを読み込んでウェルカム画面を閉じる */
 function loadSampleData() {
   // ══════════════════════════════════════════════════════════

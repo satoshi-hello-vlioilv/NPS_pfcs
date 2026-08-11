@@ -2,7 +2,7 @@
  * Font Awesome Free 6.5.1 (subset) — https://fontawesome.com
  * License: CC BY 4.0 (icons), SIL OFL 1.1 (fonts), MIT (code)
  *
- * このプロジェクトで実際に使用している 104 個のアイコンだけを抽出したサブセット。
+ * このプロジェクトで実際に使用している 105 個のアイコンだけを抽出したサブセット。
  * 外部CDN(cdnjs)から読み込むと、外部接続が遮断された社内・工場ネットワークでは
  * アイコンが一切表示されなくなるため、ローカルに同梱している。
  * このファイルは tools/build-icon-subset.js が生成する（直接編集しないこと）。
@@ -59,6 +59,7 @@
 .fa-circle-nodes:before{content:"\e4e2"}
 .fa-clipboard:before{content:"\f328"}
 .fa-clock:before{content:"\f017"}
+.fa-clock-rotate-left:before{content:"\f1da"}
 .fa-clone:before{content:"\f24d"}
 .fa-code-branch:before{content:"\f126"}
 .fa-code-merge:before{content:"\f387"}

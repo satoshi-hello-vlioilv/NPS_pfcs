@@ -1,12 +1,13 @@
 {
   "name": "nps-pfcs",
-  "version": "1.19.0",
+  "version": "1.19.1",
   "private": true,
   "description": "NPS 工程図エディタ（ブラウザ単体で動作する静的アプリ）",
   "scripts": {
     "start": "node tools/serve.js",
     "test": "node tests/run-all.js",
-    "build:icons": "node tools/build-icon-subset.js"
+    "build:icons": "node tools/build-icon-subset.js",
+    "build:changelog": "node tools/build-changelog.js"
   },
   "devDependencies": {
     "playwright-core": "^1.56.1"

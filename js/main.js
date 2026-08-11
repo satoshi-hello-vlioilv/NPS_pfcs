@@ -1245,6 +1245,10 @@ function initEvents() {
 
   document.addEventListener('keydown', ev => {
     if (document.getElementById('edit-modal').classList.contains('show')) return;
+    if (document.getElementById('changelog-modal').classList.contains('show')) {
+      if (ev.key === 'Escape') closeChangelogModal();
+      return;
+    }
     if (document.getElementById('guide-modal').classList.contains('show')) {
       if (ev.key === 'Escape') closeGuideModal();
       return;
@@ -1379,7 +1383,7 @@ function loadJ(ev) {
 async function init() {
   if (!S.meta.dt) S.meta.dt = new Date().toISOString().split('T')[0];
   const verEl = document.getElementById('app-version');
-  if (verEl) verEl.textContent = 'v' + APP_VERSION;
+  if (verEl) verEl.textContent = 'ver' + APP_VERSION;
   buildPalette();
   buildChartPalBar();
   initEvents();

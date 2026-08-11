@@ -84,11 +84,16 @@ body{
   letter-spacing:.01em;white-space:nowrap;
 }
 .logo-icon{color:var(--acc);font-size:15px;}
+/* バージョンバッジ。クリックで改訂履歴モーダルを開く */
 .app-version-badge{
+  font-family:'IBM Plex Mono',monospace;
   font-size:9.5px;font-weight:700;color:var(--mut);background:var(--bg);
-  border:1px solid var(--bdr2);border-radius:8px;padding:1px 7px;
+  border:1px solid var(--bdr2);border-radius:8px;padding:2px 7px;
   letter-spacing:.02em;font-feature-settings:'tnum';
+  cursor:pointer;transition:background var(--tr),border-color var(--tr),color var(--tr);
 }
+.app-version-badge:hover{background:var(--acc-bg);border-color:var(--acc-lt);color:var(--acc-hv);}
+.app-version-badge:active{transform:scale(.96);}
 
 /* ── ツールバーボタン ──────────────────── */
 .tbtn{
@@ -7519,3 +7524,79 @@ td.rm-td-chart { display: table-cell; } /* flex fallback fix */
   padding:1px 5px;border-radius:99px;line-height:1.4;
 }
 .tbtn-caret{font-size:9px !important;opacity:.55;}
+
+/* ══════════════════════════════════════════════
+   改訂履歴モーダル
+   （既存の凡例まわりが .cl-* を使っているため chg- を接頭辞にする）
+   ══════════════════════════════════════════════ */
+.chg-current-ver{
+  font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:700;
+  color:var(--acc);background:var(--acc-bg);
+  border:1px solid var(--acc-lt);border-radius:99px;padding:2px 9px;
+  margin-left:8px;flex-shrink:0;
+}
+.chg-body{flex:1;overflow-y:auto;padding:20px 26px 28px;}
+.chg-empty{
+  display:flex;align-items:center;gap:8px;justify-content:center;
+  padding:40px;color:var(--mut);font-size:13px;
+}
+
+/* バージョン単位のブロック。左の縦線と丸印で時系列であることを示す */
+.chg-ver{
+  position:relative;padding:0 0 22px 22px;
+  border-left:2px solid var(--bdr);
+}
+.chg-ver:last-child{border-left-color:transparent;padding-bottom:4px;}
+.chg-ver::before{
+  content:'';position:absolute;left:-6px;top:5px;
+  width:10px;height:10px;border-radius:50%;
+  background:var(--bdr2);border:2px solid var(--surf);
+}
+.chg-ver-current::before{background:var(--acc);box-shadow:0 0 0 3px var(--acc-bg);}
+
+.chg-ver-hdr{display:flex;align-items:center;gap:8px;margin-bottom:9px;flex-wrap:wrap;}
+.chg-ver-num{
+  font-family:'IBM Plex Mono',monospace;
+  font-size:14px;font-weight:700;color:var(--txt);
+}
+.chg-ver-current .chg-ver-num{color:var(--acc);}
+/* 変更の大きさ（メジャー/マイナー/パッチ）を色分けして示す */
+.chg-ver-kind{
+  font-size:10px;font-weight:700;padding:1px 7px;border-radius:99px;
+  border:1px solid transparent;
+}
+.chg-kind-major{background:#fef2f2;color:#b91c1c;border-color:#fecaca;}
+.chg-kind-minor{background:#eff6ff;color:#1d4ed8;border-color:#bfdbfe;}
+.chg-kind-patch{background:#f8fafc;color:#64748b;border-color:#e2e8f0;}
+.chg-ver-badge{
+  font-size:10px;font-weight:700;padding:1px 8px;border-radius:99px;
+  background:var(--acc);color:#fff;
+}
+
+.chg-items{list-style:none;margin:0;padding:0;}
+.chg-item{
+  font-size:12.5px;line-height:1.8;color:var(--txt2);
+  padding-left:15px;position:relative;margin-bottom:8px;
+}
+.chg-item:last-child{margin-bottom:0;}
+.chg-item::before{
+  content:'';position:absolute;left:0;top:10px;
+  width:5px;height:5px;border-radius:50%;background:var(--bdr2);
+}
+.chg-item strong{color:var(--txt);font-weight:700;}
+.chg-item code,.chg-sub code{
+  font-family:'IBM Plex Mono',monospace;font-size:11px;
+  background:var(--surf2);border:1px solid var(--bdr);border-radius:4px;
+  padding:1px 5px;color:var(--txt2);
+}
+/* ぶら下がりの詳細項目 */
+.chg-sub{list-style:none;margin:7px 0 0;padding:0;}
+.chg-sub li{
+  font-size:12px;line-height:1.75;color:var(--mut);
+  padding-left:14px;position:relative;margin-bottom:5px;
+}
+.chg-sub li:last-child{margin-bottom:0;}
+.chg-sub li::before{
+  content:'';position:absolute;left:0;top:9px;
+  width:7px;height:1.5px;background:var(--bdr2);
+}

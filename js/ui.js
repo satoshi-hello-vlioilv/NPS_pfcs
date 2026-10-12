@@ -38,13 +38,12 @@ function openModal(nid) {
   _editLabelShow         = node.labelShow   !== false;
   if (_editBadgeBorders['unit']    === undefined) _editBadgeBorders['unit']    = node.unitBorder    !== false;
   if (_editBadgeBorders['comment'] === undefined) _editBadgeBorders['comment'] = node.commentBorder === true;
-  // 改善データの初期化
-  if (isNumType(node.type)) {
-    const imp = node.improvement || {};
-    _editImpBefore = { ..._IMP_DEF(), ...(imp.before || {}) };
-    _editImpAfter  = { ..._IMP_DEF(), ...(imp.after  || {}) };
-    _editImpTab    = improvementMode; // 現在のモードを初期タブに
-  }
+  // 改善データの初期化。加工・検査以外も必ず初期化する（モーダル内で記号を加工・検査に
+  // 変えて保存すると、前に開いた別ノードの改善データがそのまま書き込まれてしまうため）
+  const imp = node.improvement || {};
+  _editImpBefore = { ..._IMP_DEF(), ...(imp.before || {}) };
+  _editImpAfter  = { ..._IMP_DEF(), ...(imp.after  || {}) };
+  _editImpTab    = improvementMode; // 現在のモードを初期タブに
   _editModalTab = 'basic'; // 左タブをリセット
   _buildModal(node);
   document.getElementById('edit-modal').classList.add('show');
@@ -1660,11 +1659,20 @@ let _capImpTab     = 'before';
 let _capImpBefore  = null;
 let _capImpAfter   = null;
 
+/**
+ * 能力表モーダルの対象ノード一覧（アクティブチャートは S.nodes）。
+ * 非アクティブチャートは、能力表の表示（getChartData）と同じく現在モードのバリアントを参照する。
+ * chart.nodes を直接見ると、改善前/後バリアントを持つ工程図で表示中の行と別のノードを
+ * 参照してしまい、モーダルが開かない・古い値が表示されるといった不整合が起きる。
+ */
+function _capImpNodeList(chartId) {
+  if (!chartId || chartId === W.activeId) return S.nodes;
+  const chart = W.charts.find(c => c.id === chartId);
+  return chart ? getChartNodesRef(chart) : [];
+}
+
 function openCapImpModal(nodeId, chartId) {
-  // ノードを取得（アクティブチャートは S.nodes、それ以外は W.charts から）
-  const isActive = !chartId || chartId === W.activeId;
-  const nodeList = isActive ? S.nodes : (W.charts.find(c => c.id === chartId)?.nodes || []);
-  const node     = nodeList.find(n => n.id === nodeId);
+  const node = _capImpNodeList(chartId).find(n => n.id === nodeId);
   if (!node || !isNumType(node.type)) return;
 
   _capImpNodeId  = nodeId;
@@ -1687,9 +1695,7 @@ function closeCapImpModal() {
 }
 
 function _renderCapImpModal(nodeArg) {
-  const isActive = _capImpChartId === W.activeId;
-  const nodeList = isActive ? S.nodes : (W.charts.find(c => c.id === _capImpChartId)?.nodes || []);
-  const node     = nodeArg || nodeList.find(n => n.id === _capImpNodeId);
+  const node = nodeArg || _capImpNodeList(_capImpChartId).find(n => n.id === _capImpNodeId);
   if (!node) return;
 
   const lbl  = getEffectiveLabel(node) || SYMS[node.type]?.name || '';
@@ -1833,9 +1839,7 @@ function applyCapImpMachine() {
 // モーダル編集中のライブプレビューをノードに適用
 function _applyLiveImpPreview() {
   if (!_capImpNodeId) return;
-  const isActive = _capImpChartId === W.activeId;
-  const nodeList = isActive ? S.nodes : (W.charts.find(c => c.id === _capImpChartId)?.nodes || []);
-  const node = nodeList.find(n => n.id === _capImpNodeId);
+  const node = _capImpNodeList(_capImpChartId).find(n => n.id === _capImpNodeId);
   if (node) {
     node._liveImpPreview = { before: { ..._capImpBefore }, after: { ..._capImpAfter } };
   }
@@ -1845,7 +1849,10 @@ function _applyLiveImpPreview() {
 function _clearLiveImpPreview() {
   const clearFromList = list => list.forEach(n => { delete n._liveImpPreview; });
   clearFromList(S.nodes);
-  W.charts.forEach(c => clearFromList(c.nodes || []));
+  W.charts.forEach(c => {
+    clearFromList(c.nodes || []);
+    Object.values(c.impVariants || {}).forEach(v => clearFromList(v?.nodes || []));
+  });
 }
 
 function refreshCapImpCalc() {
@@ -2117,6 +2124,7 @@ function _lfDeleteNode(nid) {
   S.nodes     = S.nodes.filter(n => n.id !== nid);
   S.edges     = S.edges.filter(e => e.from !== nid && e.to !== nid);
   S.listOrder = S.listOrder.filter(i => i !== nid);
+  _pruneMerges();
   if (S.sel?.id === nid) S.sel = null;
   redraw();
 }
@@ -2553,7 +2561,10 @@ function _crossChartTransfer(nodeId, targetChartId) {
   const tgt = W.charts.find(c => c.id === targetChartId);
   if (!tgt) return;
 
-  pushUndo();
+  // 転送は転送先の工程図も書き換えるが、Undo は編集中の工程図(S)しか巻き戻せない。
+  // 巻き戻すと「元の工程図に戻る＋転送先にも残る」で同じ記号が2つできてしまうため、
+  // 工程図の削除などと同様に元に戻せない操作として扱い、事前に確認する。
+  if (!confirm(`「${node.label || SYMS[node.type]?.name || ''}」を「${tgt.name}」に転送します。\nこの操作は元に戻せず、これまでの「元に戻す」履歴もリセットされます。続けますか？`)) return;
 
   // 前後ノードをブリッジ接続（A→node→B ⇒ A→B）
   const inEdges  = S.edges.filter(e => e.to   === nodeId);
@@ -2561,7 +2572,9 @@ function _crossChartTransfer(nodeId, targetChartId) {
   for (const ie of inEdges) {
     for (const oe of outEdges) {
       if (!S.edges.some(e => e.from === ie.from && e.to === oe.to)) {
-        S.edges.push({ id: uid(), from: ie.from, fromPort: 'r', to: oe.to, toPort: 'l', hidden: false });
+        // 起点(内製/外製)が絡む配線は他の箇所と同じく非表示配線にする
+        const hidden = isBase(N(ie.from)?.type) || isBase(N(oe.to)?.type);
+        S.edges.push({ id: uid(), from: ie.from, fromPort: 'r', to: oe.to, toPort: 'l', hidden });
       }
     }
   }
@@ -2572,17 +2585,24 @@ function _crossChartTransfer(nodeId, targetChartId) {
   S.edges    = S.edges.filter(e => e.from !== nodeId && e.to !== nodeId);
   S.nodes    = S.nodes.filter(n => n.id !== nodeId);
   S.listOrder = S.listOrder.filter(id => id !== nodeId);
+  _pruneMerges();
   if (S.sel?.id === nodeId) S.sel = null;
 
-  // ターゲットチャートに追加
-  tgt.nodes     = [...(tgt.nodes     || []), transferNode];
-  tgt.listOrder = [...(tgt.listOrder || []), nodeId];
+  // ターゲットチャートに追加。改善前/後バリアントを持つ工程図は表示側(getChartData)が
+  // 現在モードのバリアントを読むため、そちらへ追加しないと転送先に表示されない。
+  const dst = tgt.impVariants?.[improvementMode] || tgt;
+  dst.nodes     = [...(dst.nodes     || []), transferNode];
+  dst.listOrder = [...(dst.listOrder || []), nodeId];
+
+  // 転送前の履歴はすべて転送した記号を含むため、どれに戻っても記号が重複する。履歴を破棄する。
+  S._undo = []; S._redo = []; rUB();
 
   syncActiveChart();
   saveWorkspace();
   redraw();
   updateListPanel();
-  setStatus(`「${esc(node.label || SYMS[node.type]?.name || '')}」を「${esc(tgt.name)}」に転送しました`);
+  // setStatus は textContent で表示するため esc() は不要（付けると &amp; などが見えてしまう）
+  setStatus(`「${node.label || SYMS[node.type]?.name || ''}」を「${tgt.name}」に転送しました`);
 }
 
 // ── イベントバインド ─────────────────────────────
@@ -4042,6 +4062,7 @@ function deleteSel() {
     S.nodes     = S.nodes.filter(n => n.id !== id);
     S.edges     = S.edges.filter(e => e.from !== id && e.to !== id);
     S.listOrder = S.listOrder.filter(i => i !== id);
+    _pruneMerges();
   } else {
     S.edges = S.edges.filter(e => e.id !== S.sel.id);
   }
@@ -4222,6 +4243,7 @@ function deleteGroup(gid) {
   pushUndo();
   S.nodes.forEach(n => { if (n.groupId === gid) n.groupId = null; });
   S.groups = S.groups.filter(x => x.id !== gid);
+  _pruneMerges();
   if (S.activeGroupId === gid) S.activeGroupId = null;
   redraw();
 }

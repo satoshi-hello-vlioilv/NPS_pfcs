@@ -1,6 +1,6 @@
 {
   "name": "nps-pfcs",
-  "version": "1.19.2",
+  "version": "1.19.3",
   "private": true,
   "description": "NPS 工程図エディタ（ブラウザ単体で動作する静的アプリ）",
   "scripts": {

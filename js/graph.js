@@ -577,44 +577,17 @@ function _layoutRows(grouped, _NODE_GAP_UNUSED, LEFT_MARGIN) {
   }
 
   // ── Step2: 合流接続のあるサブグループを右→左で逆算 ──
-  for (const m of (S.merges || [])) {
-    const tgt  = N(m.targetNodeId); if (!tgt) continue;
-    const tgtX = nodeXMap[m.targetNodeId]; if (tgtX == null) continue;
-
-    const subRow = grouped.find(row => row.groupId === m.subGroupId);
-    if (!subRow || !subRow.nodes.length) continue;
-
-    const subNodes = subRow.nodes;
-    const tgtR     = SYMS[tgt.type].r;
-
-    // 合流先の左ポート: unpan→tgtX, other→tgtX-tgtR
-    const tgtLeftPort   = tgt.type === 'unpan' ? tgtX : tgtX - tgtR;
-    // 末端ノードの右ポート = 合流先左ポート - C
-    const lastRightPort = snapV(tgtLeftPort - C);
-
-    // 末端ノードを右ポートから逆算
-    const last  = subNodes[subNodes.length - 1];
-    const lastR = SYMS[last.type].r;
-    nodeXMap[last.id] = last.type === 'unpan'
-      ? snapV(lastRightPort - 2 * lastR)   // 左端
-      : snapV(lastRightPort - lastR);      // 中心
-
-    // 末端より左のノードを右→左に逆算
-    for (let i = subNodes.length - 2; i >= 0; i--) {
-      const node  = subNodes[i];
-      const nextN = subNodes[i + 1];
-      const r     = SYMS[node.type].r;
-      const nextR = SYMS[nextN.type].r;
-      // 次ノードの左ポート
-      const nextLeftPort = nextN.type === 'unpan'
-        ? nodeXMap[nextN.id]
-        : nodeXMap[nextN.id] - nextR;
-      // 現ノードの右ポート = 次ノード左ポート - gap(現→次)
-      const gap      = node.type === 'unpan' ? 2 * C : C;
-      const rightPort= snapV(nextLeftPort - gap);
-      nodeXMap[node.id] = node.type === 'unpan'
-        ? snapV(rightPort - 2 * r)
-        : snapV(rightPort - r);
+  // 孫グループ（枝へさらに合流するグループ）は合流先の枝のX確定後でないと配置できない。
+  // S.merges の並びは作成順で依存順とは限らないため、配置できたものから順に
+  // 確定させ、進展がなくなるまで繰り返す（循環した合流は配置されないまま残る）。
+  const pendingMerges = (S.merges || []).slice();
+  let progressed = true;
+  while (pendingMerges.length && progressed) {
+    progressed = false;
+    for (let mi = 0; mi < pendingMerges.length; mi++) {
+      if (nodeXMap[pendingMerges[mi].targetNodeId] == null) continue;
+      _placeMergedSubRow(pendingMerges.splice(mi--, 1)[0], grouped, nodeXMap);
+      progressed = true;
     }
   }
 
@@ -631,6 +604,48 @@ function _layoutRows(grouped, _NODE_GAP_UNUSED, LEFT_MARGIN) {
       node.x = nodeXMap[node.id] ?? node.x;
       node.y = snapV(yi);
     }
+  }
+}
+
+/** 合流接続のあるサブグループ1行を、合流先ノードのX位置から右→左に逆算して配置する */
+function _placeMergedSubRow(m, grouped, nodeXMap) {
+  const tgt  = N(m.targetNodeId); if (!tgt) return;
+  const tgtX = nodeXMap[m.targetNodeId]; if (tgtX == null) return;
+
+  const subRow = grouped.find(row => row.groupId === m.subGroupId);
+  if (!subRow || !subRow.nodes.length) return;
+
+  const subNodes = subRow.nodes;
+  const tgtR     = SYMS[tgt.type].r;
+
+  // 合流先の左ポート: unpan→tgtX, other→tgtX-tgtR
+  const tgtLeftPort   = tgt.type === 'unpan' ? tgtX : tgtX - tgtR;
+  // 末端ノードの右ポート = 合流先左ポート - C
+  const lastRightPort = snapV(tgtLeftPort - C);
+
+  // 末端ノードを右ポートから逆算
+  const last  = subNodes[subNodes.length - 1];
+  const lastR = SYMS[last.type].r;
+  nodeXMap[last.id] = last.type === 'unpan'
+    ? snapV(lastRightPort - 2 * lastR)   // 左端
+    : snapV(lastRightPort - lastR);      // 中心
+
+  // 末端より左のノードを右→左に逆算
+  for (let i = subNodes.length - 2; i >= 0; i--) {
+    const node  = subNodes[i];
+    const nextN = subNodes[i + 1];
+    const r     = SYMS[node.type].r;
+    const nextR = SYMS[nextN.type].r;
+    // 次ノードの左ポート
+    const nextLeftPort = nextN.type === 'unpan'
+      ? nodeXMap[nextN.id]
+      : nodeXMap[nextN.id] - nextR;
+    // 現ノードの右ポート = 次ノード左ポート - gap(現→次)
+    const gap      = node.type === 'unpan' ? 2 * C : C;
+    const rightPort= snapV(nextLeftPort - gap);
+    nodeXMap[node.id] = node.type === 'unpan'
+      ? snapV(rightPort - 2 * r)
+      : snapV(rightPort - r);
   }
 }
 

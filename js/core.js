@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════
 
 /** アプリバージョン（セマンティックバージョニング）。更新時は CHANGELOG.md も更新すること。 */
-const APP_VERSION = '1.19.2';
+const APP_VERSION = '1.19.3';
 
 const C = 20;
 
@@ -169,6 +169,8 @@ function ss() {
     nodes:           JSON.parse(JSON.stringify(S.nodes)),
     edges:           JSON.parse(JSON.stringify(S.edges)),
     groups:          JSON.parse(JSON.stringify(S.groups ||[])),
+    // 合流設定もスナップショットに含める（含めないと合流の作成・解除を undo できない）
+    merges:          JSON.parse(JSON.stringify(S.merges ||[])),
     listOrder:[...S.listOrder],
     backboneGroupId: S.backboneGroupId || null,
     layoutMode:      S.layoutMode || 'balance',
@@ -203,6 +205,8 @@ function applyState(s) {
   S.nodes           = s.nodes;
   S.edges           = s.edges;
   S.groups          = s.groups    ||[];
+  // merges を持たない古いスナップショットでは現在値を維持する
+  if (s.merges) S.merges = s.merges;
   S.listOrder       = s.listOrder ||[];
   S.backboneGroupId = s.backboneGroupId || null;
   // 配置パターンもノード座標と同時に巻き戻す。片方だけ戻すと
@@ -326,6 +330,8 @@ function loadChartIntoS(chart) {
   S.backboneGroupId = (v ? v.backboneGroupId : null) ?? chart.backboneGroupId ?? null;
   S.layoutMode      = (v ? v.layoutMode : null) ?? chart.layoutMode ?? 'balance';
   S.activeGroupId   = (v ? v.activeGroupId : null) ?? chart.activeGroupId ?? null;
+  // 以前のバージョンで記号を削除した際に残った、合流先の無い合流設定を修復する
+  _pruneMerges();
   S.sel             = null;
   S._undo           =[];
   S._redo           =[];
@@ -833,6 +839,18 @@ function resolveActiveGroupId() {
     if (n) return n.groupId || null;
   }
   return null;
+}
+
+// ── 合流設定の後始末 ─────────────────────────────
+
+/**
+ * 合流元グループまたは合流先ノードが存在しなくなった合流設定を取り除く。
+ * ノード・グループの削除後に呼ぶ。残したままにすると、合流先が無いのに
+ * 「合流あり」と扱われてそのグループが整列で配置されなくなり、リスト上にも
+ * 表示されないため解除もできなくなる。
+ */
+function _pruneMerges() {
+  S.merges = (S.merges || []).filter(m => G(m.subGroupId) && N(m.targetNodeId));
 }
 
 // ── リストOrder 挿入ヘルパー ──────────────────────

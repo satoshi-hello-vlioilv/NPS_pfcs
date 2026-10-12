@@ -830,7 +830,7 @@ function buildNodePreviewSVG({ type, label, unit, unitQty, badges, comment,
 
 // ── プロパティパネル ─────────────────────────────
 
-function updateMeta(k, v) { S.meta[k] = v; }
+function updateMeta(k, v) { S.meta[k] = v; _scheduleSave(); }
 
 function syncLabel(nid, val) {
   const n = N(nid); if (!n) return;

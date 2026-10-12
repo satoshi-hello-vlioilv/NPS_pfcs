@@ -771,7 +771,16 @@ function saveModal() {
   const node = N(editingNodeId);
   if (!node) { closeModal(); return; }
   pushUndo();
+  const prevType         = node.type;
   node.type              = editingNewType ?? node.type;
+  // 起点(内製/外製)への変更・起点からの変更では、つながっている配線の非表示設定を
+  // 他の接続操作と同じ規則（起点が絡む配線は非表示）で付け直す
+  if (node.type !== prevType && isBase(node.type) !== isBase(prevType)) {
+    for (const e of S.edges) {
+      if (e.from !== node.id && e.to !== node.id) continue;
+      e.hidden = isBase(N(e.from)?.type) || isBase(N(e.to)?.type);
+    }
+  }
   node.label             = (document.getElementById('m-inp-label')?.value   ?? '').trim();
   node.comment           =  document.getElementById('m-inp-comment')?.value ?? '';
   node.unit              = _getCurrentUnit();
@@ -2779,6 +2788,10 @@ function _onGrpMergeEnd(ev) {
 
   // 自グループへのドロップは無効
   if (tgtNode.groupId === _grpMergeDnd.subGroupId) return;
+  if (_wouldCreateMergeCycle(_grpMergeDnd.subGroupId, targetNodeId)) {
+    showToast('⚠ 合流が循環するため接続できません — 合流先のグループがこのグループへ合流しています', 'error');
+    return;
+  }
 
   // 既存の合流接続が同じサブグループから存在する場合は上書き確認
   const existing = getMergeBySubGroup(_grpMergeDnd.subGroupId);
@@ -3176,6 +3189,7 @@ function openBadgePop(nid, btn) {
     bBtn.addEventListener('click', ev => {
       ev.stopPropagation();
       const n = N(nid); if (!n) return;
+      pushUndo();
       n.badges = n.badges ||[];
       const idx = n.badges.indexOf(bBtn.dataset.bid);
       if (idx >= 0) n.badges.splice(idx, 1); else n.badges.push(bBtn.dataset.bid);
@@ -4314,6 +4328,7 @@ function duplicateGroup(gid) {
 
 function toggleNodeBadge(nid, bid) {
   const node = N(nid); if (!node) return;
+  pushUndo();
   node.badges = node.badges ||[];
   const idx = node.badges.indexOf(bid);
   if (idx >= 0) node.badges.splice(idx, 1); else node.badges.push(bid);
@@ -4459,22 +4474,33 @@ function duplicateChart(cid) {
   copy.id      = newId;
   copy.name    = src.name + ' (コピー)';
 
+  // 改善前/後バリアントも含め、同じノード/グループには同じ新IDを割り当てる
+  // （バリアント間でIDを共有しているため。バリアント側を付け替え忘れると、
+  //  複製元と複製先で同じIDのノード・グループが存在してしまう）
   const nidMap = {}, gidMap = {};
-  copy.nodes.forEach(n => { nidMap[n.id] = uid(); n.id = nidMap[n.id]; });
-  copy.groups.forEach(g => { gidMap[g.id] = uid(); g.id = gidMap[g.id]; });
-  copy.edges.forEach(e => {
-    e.id = uid();
-    e.from = nidMap[e.from] || e.from;
-    e.to   = nidMap[e.to]   || e.to;
-  });
-  copy.nodes.forEach(n => { if (n.groupId) n.groupId = gidMap[n.groupId] || null; });
-  copy.merges = (copy.merges ||[]).map(m => ({
-    ...m, id: uid(),
-    subGroupId:  gidMap[m.subGroupId]      || m.subGroupId,
-    targetNodeId: nidMap[m.targetNodeId]   || m.targetNodeId,
-  }));
-  copy.listOrder       = copy.listOrder.map(id => nidMap[id] || id);
-  copy.backboneGroupId = copy.backboneGroupId ? (gidMap[copy.backboneGroupId] || null) : null;
+  const newNid = id => nidMap[id] || (nidMap[id] = uid());
+  const newGid = id => gidMap[id] || (gidMap[id] = uid());
+  const remap = d => {
+    if (!d) return;
+    (d.nodes  || []).forEach(n => { n.id = newNid(n.id); });
+    (d.groups || []).forEach(g => { g.id = newGid(g.id); });
+    (d.nodes  || []).forEach(n => { if (n.groupId) n.groupId = gidMap[n.groupId] || null; });
+    (d.edges  || []).forEach(e => {
+      e.id   = uid();
+      e.from = nidMap[e.from] || e.from;
+      e.to   = nidMap[e.to]   || e.to;
+    });
+    d.merges = (d.merges || []).map(m => ({
+      ...m, id: uid(),
+      subGroupId:   gidMap[m.subGroupId]   || m.subGroupId,
+      targetNodeId: nidMap[m.targetNodeId] || m.targetNodeId,
+    }));
+    d.listOrder = (d.listOrder || []).map(id => nidMap[id] || id);
+    if (d.backboneGroupId) d.backboneGroupId = gidMap[d.backboneGroupId] || null;
+    if (d.activeGroupId && d.activeGroupId !== '__ug__') d.activeGroupId = gidMap[d.activeGroupId] || null;
+  };
+  remap(copy);
+  Object.values(copy.impVariants || {}).forEach(remap);
 
   W.charts.push(copy);
   saveWorkspace();

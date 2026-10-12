@@ -187,6 +187,23 @@ function getMergeBySubGroup(subGroupId) {
   return (S.merges || []).find(m => m.subGroupId === subGroupId) || null;
 }
 
+/**
+ * subGroupId を targetNodeId へ合流させると合流が循環するか判定する
+ * （例: A→B に合流済みのとき B→A を作る）。循環した合流は整列で配置できない。
+ * 合流先ノードの所属グループから合流をたどり、subGroupId に戻ってくれば循環。
+ */
+function _wouldCreateMergeCycle(subGroupId, targetNodeId) {
+  let gid = N(targetNodeId)?.groupId ?? null;
+  const seen = new Set();
+  while (gid != null && !seen.has(gid)) {
+    if (gid === subGroupId) return true;
+    seen.add(gid);
+    const m = getMergeBySubGroup(gid);
+    gid = m ? (N(m.targetNodeId)?.groupId ?? null) : null;
+  }
+  return false;
+}
+
 /** targetNodeId に向かう合流設定を全て返す */
 function getMergesByTarget(targetNodeId) {
   return (S.merges || []).filter(m => m.targetNodeId === targetNodeId);

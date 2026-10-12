@@ -842,6 +842,10 @@ function _finishEdgeReconnect(eid, end, wx, wy) {
   if (fn?.groupId && tn?.groupId && fn.groupId !== tn.groupId) {
     if (newToPort === 't' || newToPort === 'b') {
       // 合流接続への切り替え: 通常配線としては不要になるため削除し、合流(merge)として登録する
+      if (_wouldCreateMergeCycle(fn.groupId, newTo)) {
+        showToast('⚠ 合流が循環するため接続できません — 合流先のグループがこのグループへ合流しています', 'error');
+        return;
+      }
       const existing = getMergeBySubGroup(fn.groupId);
       if (existing && !confirm('このグループにはすでに合流接続があります。上書きしますか？')) return;
       pushUndo();
@@ -1194,6 +1198,10 @@ function initEvents() {
           if (fn?.groupId && tn?.groupId && fn.groupId !== tn.groupId) {
             if (tgt.port === 't' || tgt.port === 'b') {
               // 合流接続（右端OUT → 上/下IN）: merge エントリを作成
+              if (_wouldCreateMergeCycle(fn.groupId, tgt.nid)) {
+                showToast('⚠ 合流が循環するため接続できません — 合流先のグループがこのグループへ合流しています', 'error');
+                IA = null; return;
+              }
               const existing = getMergeBySubGroup(fn.groupId);
               if (existing) {
                 if (!confirm('このグループにはすでに合流接続があります。上書きしますか？')) { IA = null; return; }
@@ -1255,6 +1263,9 @@ function initEvents() {
       if (ev.key === 'Escape') closeGuideModal();
       return;
     }
+    // その他のダイアログ（画像保存・能力表・機械マスタ等）の表示中は、背後のチャートへの
+    // Delete・Undo 等のショートカットを無効にする（気づかないうちに記号が消えるのを防ぐ）
+    if (document.querySelector('.modal.show, .wc-overlay.show')) return;
     const tag = document.activeElement.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA') return;
     if (ev.key === ' ' || ev.code === 'Space') {
@@ -1332,6 +1343,13 @@ function loadJ(ev) {
   r.onload = e => {
     try {
       const d = JSON.parse(e.target.result);
+      if (!d || typeof d !== 'object') throw new Error('工程図のJSONファイルではありません');
+      // 外部ファイルのため、画面に埋め込まれるID・色・数値の形式を検査してから使う
+      // （機械IDの対応がずれないよう、工程図と全体設定で同じ置換表を使う）
+      let fixId;
+      if (Array.isArray(d.charts)) fixId = _sanitizeWorkspace(d);
+      else { fixId = _idFixer(); _sanitizeChartData(d, fixId); }
+      _sanitizeGlobalSettings(d, fixId);
       if (Array.isArray(d.charts) && d.charts.length) {
         // V3 ワークスペース形式
         W.charts   = d.charts;

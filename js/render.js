@@ -897,7 +897,7 @@ function updateProps() {
               }).join('')}
             </div>` : '';
         const metaRows = [
-          node.unit    && `<div class="rp-meta-row"><i class="fa-solid fa-box rp-meta-ico"></i><span>${esc(node.unit)}${node.unitQty ? ' × '+node.unitQty : ''}</span></div>`,
+          node.unit    && `<div class="rp-meta-row"><i class="fa-solid fa-box rp-meta-ico"></i><span>${esc(node.unit)}${node.unitQty ? ' × '+esc(node.unitQty) : ''}</span></div>`,
           node.comment && `<div class="rp-meta-row rp-meta-comment"><i class="fa-regular fa-comment-dots rp-meta-ico"></i><span>${esc(node.comment)}</span></div>`,
         ].filter(Boolean).join('');
         // ── 所属グループ表示（クリックで所属先を変更） ──

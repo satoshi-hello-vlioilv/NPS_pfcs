@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════
 
 /** アプリバージョン（セマンティックバージョニング）。更新時は CHANGELOG.md も更新すること。 */
-const APP_VERSION = '1.19.3';
+const APP_VERSION = '1.19.4';
 
 const C = 20;
 
@@ -722,9 +722,136 @@ function _scheduleSave() {
   _saveTimer = setTimeout(saveWorkspace, 600);
 }
 
+// ── 読み込みデータの検査 ─────────────────────────
+//
+// ID・色・座標などは画面描画時に HTML 属性や onclick 内へそのまま埋め込んでいる。
+// 細工した JSON ファイルを読み込むとそこからスクリプトが実行されうるため、
+// 外部から入ってくるデータは読み込み時に形式を検査して正規化する。
+// 正規の操作で作られたデータは常に条件を満たすため、通常は何も変わらない。
+
+const _SAFE_ID    = /^[A-Za-z0-9_-]{1,64}$/;
+const _SAFE_COLOR = /^#[0-9a-fA-F]{3,8}$/;
+const _PORTS      = ['l', 'r', 't', 'b'];
+
+/** 安全でないIDを、同じ値には同じ新IDが対応するよう置き換える関数を返す */
+function _idFixer() {
+  const map = new Map();
+  return id => {
+    if (id == null) return null;
+    if (typeof id === 'string' && _SAFE_ID.test(id)) return id;
+    const key = String(id);
+    if (!map.has(key)) map.set(key, uid());
+    return map.get(key);
+  };
+}
+
+const _num   = (v, def = 0) => (typeof v === 'number' && isFinite(v)) ? v : (isFinite(+v) && v !== '' && v != null ? +v : def);
+const _color = (c, def)     => (typeof c === 'string' && _SAFE_COLOR.test(c)) ? c : def;
+
+/** 1工程図分（またはその改善前/後バリアント）のデータを正規化する */
+function _sanitizeChartData(d, fixId) {
+  if (!d || typeof d !== 'object') return;
+  const badgeIds = new Set(BADGES.map(b => b.id));
+  // 存在しない項目は補わない（改善前/後バリアントは未設定項目をチャート本体の値で補うため）
+  for (const k of ['nodes', 'edges', 'groups', 'merges', 'listOrder']) {
+    if (k in d && !Array.isArray(d[k])) delete d[k];
+  }
+  if (d.nodes) d.nodes = d.nodes.filter(n => n && SYMS[n.type]).map(n => {
+    n.id      = fixId(n.id);
+    n.groupId = fixId(n.groupId);
+    n.x = _num(n.x); n.y = _num(n.y);
+    n.badges = (Array.isArray(n.badges) ? n.badges : []).filter(b => badgeIds.has(b));
+    const offs = {};
+    for (const [k, o] of Object.entries(n.badgeOffsets || {})) {
+      if (badgeIds.has(k) && o) offs[k] = { dx: _num(o.dx), dy: _num(o.dy) };
+    }
+    n.badgeOffsets = offs;
+    const cols = {};
+    for (const [k, c] of Object.entries(n.badgeColors || {})) {
+      if ((badgeIds.has(k) || k === 'label') && _SAFE_COLOR.test(c || '')) cols[k] = c;
+    }
+    n.badgeColors = cols;
+    if (n.improvement && typeof n.improvement === 'object') {
+      for (const mode of ['before', 'after']) {
+        const v = n.improvement[mode];
+        if (!v || typeof v !== 'object') { delete n.improvement[mode]; continue; }
+        v.machineId           = fixId(v.machineId);
+        v.manualTime          = _num(v.manualTime);
+        v.autoTime            = _num(v.autoTime);
+        v.toolChangeTime      = _num(v.toolChangeTime);
+        v.toolChangeFrequency = _num(v.toolChangeFrequency, 100);
+        v.labelOverride       = typeof v.labelOverride === 'string' ? v.labelOverride : '';
+      }
+    }
+    return n;
+  });
+  if (d.edges) d.edges = d.edges
+    .filter(e => e && _PORTS.includes(e.fromPort) && _PORTS.includes(e.toPort))
+    .map(e => ({ ...e, id: fixId(e.id), from: fixId(e.from), to: fixId(e.to) }));
+  if (d.groups) d.groups = d.groups.filter(Boolean).map(g => ({
+    ...g, id: fixId(g.id), color: _color(g.color, '#94a3b8'),
+    assignedMachineId: fixId(g.assignedMachineId),
+  }));
+  if (d.merges) d.merges = d.merges.filter(Boolean).map(m => ({
+    ...m, id: fixId(m.id), subGroupId: fixId(m.subGroupId), targetNodeId: fixId(m.targetNodeId),
+  }));
+  if (d.listOrder) d.listOrder = d.listOrder.map(fixId);
+  if (d.backboneGroupId != null) d.backboneGroupId = fixId(d.backboneGroupId);
+  if (d.activeGroupId != null && d.activeGroupId !== '__ug__') d.activeGroupId = fixId(d.activeGroupId);
+  if (d.layoutMode != null && !LAYOUT_MODES.some(m => m.id === d.layoutMode)) d.layoutMode = 'balance';
+}
+
+/** ワークスペース（{charts, activeId}）を読み込み前に正規化する */
+function _sanitizeWorkspace(d) {
+  const fixId = _idFixer();
+  d.charts = d.charts.filter(c => c && typeof c === 'object');
+  for (const c of d.charts) {
+    c.id = fixId(c.id) || uid();
+    c.name = typeof c.name === 'string' ? c.name : '工程図';
+    _sanitizeChartData(c, fixId);
+    if (c.impVariants && typeof c.impVariants === 'object') {
+      for (const k of Object.keys(c.impVariants)) {
+        if (k !== 'before' && k !== 'after') { delete c.impVariants[k]; continue; }
+        _sanitizeChartData(c.impVariants[k], fixId);
+      }
+    }
+  }
+  d.activeId = fixId(d.activeId);
+  return fixId;
+}
+
+/** 全体設定（機械マスタ・能力表設定）を読み込み前に正規化する */
+function _sanitizeGlobalSettings(d, fixId = _idFixer()) {
+  if (!d || typeof d !== 'object') return;
+  if (d.improvementMode !== 'before' && d.improvementMode !== 'after') delete d.improvementMode;
+  if (Array.isArray(d.machineMaster)) {
+    d.machineMaster = d.machineMaster.filter(m => m && typeof m === 'object').map(m => ({
+      id: fixId(m.id) || uid(), name: typeof m.name === 'string' ? m.name : '機械',
+      manualTime: _num(m.manualTime), autoTime: _num(m.autoTime),
+      toolChangeTime: _num(m.toolChangeTime), toolChangeFrequency: _num(m.toolChangeFrequency, 100),
+    }));
+  }
+  if (d.capSettings && typeof d.capSettings === 'object') {
+    const cs = d.capSettings;
+    if (cs.operatingTime != null) cs.operatingTime = _num(cs.operatingTime, 420);
+    if (cs.targetQty     != null) cs.targetQty     = _num(cs.targetQty, 100);
+    const ov = {};
+    for (const [gid, o] of Object.entries(cs.groupOverrides || {})) {
+      if (!o || typeof o !== 'object') continue;
+      const e = {};
+      if (o.operatingTime != null) e.operatingTime = _num(o.operatingTime, 420);
+      if (o.targetQty     != null) e.targetQty     = _num(o.targetQty, 100);
+      ov[fixId(gid)] = e;
+    }
+    cs.groupOverrides = ov;
+  }
+}
+
 /** 読み込んだワークスペースを S / W に反映する */
 function _applyWorkspace(d) {
   if (!d || !Array.isArray(d.charts) || !d.charts.length) return false;
+  _sanitizeWorkspace(d);
+  if (!d.charts.length) return false;
   W.charts   = d.charts;
   W.activeId = d.activeId || d.charts[0].id;
   if (d.uid) _uid = Math.max(_uid, d.uid);
@@ -972,6 +1099,7 @@ function _saveGlobalSettings() {
 
 function _applyGlobalSettings(d) {
   if (!d) return false;
+  _sanitizeGlobalSettings(d);
   if (d.improvementMode) improvementMode = d.improvementMode;
   if (Array.isArray(d.machineMaster) && d.machineMaster.length) machineMaster = d.machineMaster;
   if (d.capSettings) {

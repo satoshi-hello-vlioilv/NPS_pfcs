@@ -580,15 +580,17 @@ function _doChartInsert(node, target) {
  * 新規記号を (wx, wy) に配置する（パレットドラッグ / 配置モードクリック共通）。
  * フロー線（エッジ）や既存記号の上にドロップされた場合はその位置へ挿入し、
  * 何もない場所へのドロップは従来どおり選択中ノードの直後に追加・自動接続する。
+ * forcedTarget を渡すと位置からの推測を行わずその挿入先を使う
+ * （配線ダブルクリックメニューのように挿入先の配線が確定している場合）。
  * @returns {object} 生成したノード
  */
-function placeSymbolAt(type, wx, wy, prevSelId) {
+function placeSymbolAt(type, wx, wy, prevSelId, forcedTarget = null) {
   const sp = snapP(wx, wy);
   pushUndo();
   // 挿入判定はグリッド吸着前のドロップ位置で行う（吸着による誤ターゲットを防ぐ）
   const node = mkNode(type, wx, wy);
   S.nodes.push(node);
-  const target = _findInsertTarget(node);
+  const target = forcedTarget || _findInsertTarget(node);
   node.x = sp.x; node.y = sp.y;
   const inserted = _doChartInsert(node, target);
 

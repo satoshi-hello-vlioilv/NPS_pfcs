@@ -3740,10 +3740,13 @@ function openEdgeInsertMenu(ev, eid) {
 
   const w = c2w(ev.clientX, ev.clientY);
   const insertTypes = GROUPS.filter(g => g.id !== 'kiten').flatMap(g => g.types);
+  // 起点直後の線はドラッグ挿入と同じく挿入対象外（削除のみ）
+  const fromBase = isBase(N(edge.from)?.type);
 
   const pop = document.createElement('div');
   pop.id = '_edge_ins_menu'; pop.className = 'ctx-menu edge-ins-menu';
-  pop.innerHTML = `
+  pop.innerHTML = (fromBase ? `
+    <div class="ctx-label">起点直後の線には工程記号を挿入できません</div>` : `
     <div class="ctx-label">工程記号を追加</div>
     <div class="edge-ins-grid">
       ${insertTypes.map(t => `
@@ -3751,7 +3754,7 @@ function openEdgeInsertMenu(ev, eid) {
           ${palIcoSVG(t, 26)}
           <span>${esc(SYMS[t].shortName ?? SYMS[t].name)}</span>
         </button>`).join('')}
-    </div>
+    </div>`) + `
     <div class="ctx-sep"></div>
     <button class="ctx-item danger" data-action="delete">
       <i class="fa-solid fa-trash-can"></i><span>配線を削除</span>
@@ -3764,7 +3767,12 @@ function openEdgeInsertMenu(ev, eid) {
       e.stopPropagation();
       const type = btn.dataset.type;
       pop.remove();
-      placeSymbolAt(type, w.x, w.y, null);
+      // 挿入先はダブルクリックした配線そのもの。位置から推測すると、短い配線の
+      // 端付近では隣の記号の直後に、分岐元付近では別の分岐線に挿入されてしまう。
+      const tgtEdge = E(eid);
+      const fn = tgtEdge && N(tgtEdge.from), tn = tgtEdge && N(tgtEdge.to);
+      if (!fn || !tn) return;
+      placeSymbolAt(type, w.x, w.y, null, { kind: 'edge', edge: tgtEdge, fn, tn });
     });
   });
   pop.querySelector('[data-action="delete"]').addEventListener('click', e => {
